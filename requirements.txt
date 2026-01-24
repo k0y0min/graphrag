@@ -1,0 +1,15 @@
+google-generativeai
+python-dotenv
+pytest
+numpy
+typing_extensions
+kuzu
+networkx
+pyvis
+torch
+transformers
+accelerate
+fastapi
+uvicorn
+python-multipart
+pytest-asyncio

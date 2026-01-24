@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./:/app
+      - ./demo_db:/app/demo_db
+      - ./logs:/app/logs
+      - ./models:/app/models
+    env_file:
+      - .env
+    restart: always
