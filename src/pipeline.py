@@ -38,8 +38,6 @@ class GraphRAGPipeline:
         import uuid
         import asyncio
         doc_id = str(uuid.uuid4())[:8]
-        
-        yield {"progress": 0, "status": "Preparing ingestion...", "type": "progress", "stage": "Preparation", "current": 0, "total": 1}
 
         temp_dir = "temp_ingestion"
         if not os.path.exists(temp_dir):
@@ -58,6 +56,7 @@ class GraphRAGPipeline:
             # 1. Ingestion (Async Generator)
             detector = HierarchyDetector(self.llm_service.extractor)
             line_map = LineMap(input_filename)
+
             roles = {}
             async for update in detector.detect_async(line_map, batch_size=20):
                 if update["type"] == "progress":
@@ -69,7 +68,6 @@ class GraphRAGPipeline:
             nodes = tree_builder.build(line_map, roles, doc_id=doc_id)
 
             # 2. Chunking
-            yield {"progress": 100, "status": "Optimizing semantic chunks...", "type": "progress", "stage": "Chunking", "current": 1, "total": 1}
             injector = AncestryInjector()
             sentences = injector.inject(nodes)
             
@@ -87,14 +85,12 @@ class GraphRAGPipeline:
                     relations = update["relations"]
 
             # 4. Community Detection
-            yield {"progress": 100, "status": "Detecting knowledge communities...", "type": "progress", "stage": "Communities", "current": 1, "total": 1}
             community_map = detect_communities(entities, relations)
             for e in entities:
                 if e.id in community_map:
                     e.metadata["community_id"] = community_map[e.id]
 
             # 5. Storage
-            yield {"progress": 100, "status": "Saving to knowledge graph...", "type": "progress", "stage": "Storage", "current": 1, "total": 1}
             if clear_db:
                 self.storage.clear()
             self.storage.ingest(entities, relations)
