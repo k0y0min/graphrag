@@ -67,30 +67,35 @@ class GraphRAGPipeline:
             f.write(text)
         
         try:
-            # 1. Ingestion (Async Generator)
+            # 1. Ingestion (Async Generator) - Becomes SILENT
             detector = HierarchyDetector(self.llm_service.extractor)
+
             line_map = LineMap(input_filename)
 
             roles = {}
             async for update in detector.detect_async(line_map, batch_size=20):
                 if update["type"] == "progress":
-                    yield update
+                    pass # Silent hierarchy
                 else:
                     roles = update["data"]
             
             tree_builder = DocumentTreeBuilder()
             nodes = tree_builder.build(line_map, roles, doc_id=doc_id)
 
-            # 2. Chunking
-            yield self._report_progress("Chunking", 0, 1, "Optimizing semantic chunks...")
+            # 2. Chunking (Now Granular)
             injector = AncestryInjector()
             sentences = injector.inject(nodes)
             
             chunker = PerplexityChunker(self.llm_service.chunker, max_tokens=100, logger=self.logger)
-            chunks = await asyncio.to_thread(chunker.chunk, sentences)
-            yield self._report_progress("Chunking", 1, 1, f"Semantic chunking complete ({len(chunks)} chunks)")
+            chunks = []
+            async for update in chunker.chunk_async(sentences):
+                if isinstance(update, dict) and update.get("type") == "progress":
+                    yield update
+                else:
+                    chunks = update
 
             # 3. Extraction (Async Generator)
+
             extractor = GraphExtractor(self.llm_service.extractor)
             entities, relations = [], []
             async for update in extractor.extract_async(chunks, nodes):

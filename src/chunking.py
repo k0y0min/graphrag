@@ -57,26 +57,46 @@ class PerplexityChunker:
         self.ppl_threshold = ppl_threshold
 
     def chunk(self, sentences: List[EnrichedSentence]) -> List[FinalChunk]:
+        """Synchronous version of chunking."""
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            # This is a bit hacky for sync, but we want to promote chunk_async
+            async def _run():
+                chunks = []
+                async for res in self.chunk_async(sentences):
+                    if isinstance(res, list):
+                        chunks = res
+                return chunks
+            return loop.run_until_complete(_run())
+        finally:
+            loop.close()
+
+    async def chunk_async(self, sentences: List[EnrichedSentence]):
+        """
+        Async generator version of chunking for granular progress reporting.
+        """
         chunks = []
         current_chunk_sentences = []
         current_token_count = 0
         chunk_counter = 1
+        total = len(sentences)
         
         for i, sentence in enumerate(sentences):
-            # Estimate tokens (approx 4 chars/token)
+            # Estimate tokens
             sent_tokens = len(sentence.text) // 4
             
             # Decision Logic
-            # 1. Hard Constraint: Max tokens
             if current_chunk_sentences and (current_token_count + sent_tokens > self.max_tokens):
                 chunks.append(self._create_chunk(current_chunk_sentences, chunk_counter))
                 chunk_counter += 1
                 current_chunk_sentences = []
                 current_token_count = 0
             
-            # 2. Soft Constraint: Perplexity / Semantic Distance
-            # If we have a current chunk, check if next sentence is surprising
             if current_chunk_sentences:
+                # Perplexity check is async-friendly if the LLM backend is async
+                # For now, we call it synchronously as it's fast or might be a local model call
                 ppl = self._calculate_perplexity(current_chunk_sentences, sentence)
                 if ppl > self.ppl_threshold:
                      chunks.append(self._create_chunk(current_chunk_sentences, chunk_counter))
@@ -87,10 +107,20 @@ class PerplexityChunker:
             current_chunk_sentences.append(sentence)
             current_token_count += sent_tokens
             
+            # Yield progress every sentence or every N sentences
+            yield {
+                "type": "progress",
+                "stage": "Chunking",
+                "current": i + 1,
+                "total": total,
+                "status": f"Chunking: sentence {i+1}/{total}"
+            }
+            
         if current_chunk_sentences:
             chunks.append(self._create_chunk(current_chunk_sentences, chunk_counter))
             
-        return chunks
+        yield chunks
+
 
     def _create_chunk(self, sentences: List[EnrichedSentence], limit_id: int) -> FinalChunk:
         full_text = " ".join([s.text for s in sentences])

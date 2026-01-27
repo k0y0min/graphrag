@@ -206,11 +206,14 @@ ingestBtn.addEventListener('click', async () => {
                         // Granular status text
                         let statusText = data.status || 'Processing...';
                         if (data.stage === 'Hierarchy' && data.status.includes('Lines')) {
-                            statusText = data.status; // Keep the line range text
+                            statusText = data.status;
                         } else if (data.stage && data.total > 1) {
-                            const unit = data.stage === 'Hierarchy' ? 'Batch' : 'Chunk';
+                            let unit = 'Batch';
+                            if (data.stage === 'Extraction') unit = 'Chunk';
+                            if (data.stage === 'Chunking') unit = 'Sentence';
                             statusText = `${data.stage}: ${unit} ${data.current} of ${data.total}`;
                         }
+
 
                         ingestStatus.innerText = statusText;
                     } else if (data.type === 'result') {
