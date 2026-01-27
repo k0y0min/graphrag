@@ -50,10 +50,15 @@ class GraphStorage:
             pass
 
     def ingest(self, entities: List[Entity], relations: List[Relation]):
+        # Use simple transaction-like behavior by executing in a loop
+        # Kuzu currently doesn't have a robust 'batch_merge' python API for all cases, 
+        # but we can optimize by lowercasing IDs and reducing string operations.
+        
+        # 1. Ingest Entities
         for ent in entities:
-            # Escape strings to prevent syntax errors
-            desc = ent.description.replace('"', '\\"')
+            # Preserve original casing, but escape for query
             id_esc = ent.id.replace('"', '\\"')
+            desc = ent.description.replace('"', '\\"')
             comm_id = ent.metadata.get("community_id", -1)
             
             query = f"""
@@ -63,6 +68,7 @@ class GraphStorage:
             """
             self.conn.execute(query)
 
+        # 2. Ingest Relations
         for rel in relations:
             src_esc = rel.source_id.replace('"', '\\"')
             tgt_esc = rel.target_id.replace('"', '\\"')
@@ -82,6 +88,8 @@ class GraphStorage:
                 """
                 self.conn.execute(query)
 
+
+
     def get_node(self, entity_id: str) -> Optional[Dict[str, Any]]:
         eid_esc = entity_id.replace('"', '\\"')
         query = f"""
@@ -90,6 +98,8 @@ class GraphStorage:
         RETURN a.id, a.type, a.description
         """
         result = self.conn.execute(query)
+
+
         # Kuzu returns values in list?
         if result.has_next():
             row = result.get_next() 
@@ -114,6 +124,8 @@ class GraphStorage:
         WHERE toLower(a.id) = toLower("{eid_esc}")
         RETURN b.id, b.type, b.description, r.rel_type, r.description, false
         """
+
+
         
         results = []
         try:
@@ -129,13 +141,14 @@ class GraphStorage:
         return results
 
     def query_structural(self, entity_id: str) -> List[Any]:
-        # MATCH (p:Entity)-[:ParentOf*]->(a:Entity) RETURN p
         eid_esc = entity_id.replace('"', '\\"')
         query = f"""
         MATCH (p:Entity)-[:ParentOf*]->(a:Entity)
-        WHERE a.id = "{eid_esc}"
+        WHERE toLower(a.id) = toLower("{eid_esc}")
         RETURN p.id, p.type, p.description
         """
+
+
         result = self.conn.execute(query)
         return self._results_to_list(result)
 

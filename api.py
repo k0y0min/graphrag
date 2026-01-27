@@ -1,6 +1,8 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
+import json
+
 from pydantic import BaseModel
 from typing import Optional, List, Any
 from src.pipeline import GraphRAGPipeline
@@ -31,14 +33,18 @@ def health_check():
     return {"status": "healthy"}
 
 @app.post("/ingest")
-def ingest(request: IngestRequest):
-    try:
-        results = pipeline.ingest_text(request.text, clear_db=request.clear_db)
-        return {"status": "success", "results": results}
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+async def ingest(request: IngestRequest):
+    async def event_generator():
+        try:
+            async for update in pipeline.ingest_async(request.text, clear_db=request.clear_db):
+                yield f"data: {json.dumps(update)}\n\n"
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            yield f"data: {json.dumps({'type': 'error', 'detail': str(e)})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
 
 @app.post("/clear_db")
 def clear_db():

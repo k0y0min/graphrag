@@ -26,31 +26,24 @@ class GraphExtractor:
     def __init__(self, llm: LLMBackend):
         self.llm = llm
 
-    async def extract_async(self, chunks: List[FinalChunk], nodes: List[DocumentNode]) -> Tuple[List[Entity], List[Relation]]:
+    async def extract_async(self, chunks: List[FinalChunk], nodes: List[DocumentNode]):
         """
-        Async version of extract with parallel chunk processing.
+        Async generator version of extract with parallel chunk processing.
         """
         entities: Dict[str, Entity] = {}
         relations: List[Relation] = []
 
-        # 1. Structural Extraction (Fast, kept synchronous)
+        # 1. Structural Extraction
         for node in nodes:
-            # Create entity for the node itself (structural entity)
-            # Use node.id as entity id
-            
-            # Determine type
             node_type = node.metadata.get("type", "content").capitalize()
-            # E.g. "Header", "Content"
-            
             entity = Entity(
                 id=node.id,
                 type=f"Structure_{node_type}",
-                description=node.text[:100], # Preview
+                description=node.text[:100],
                 source_chunk_ids=[]
             )
             entities[node.id] = entity
             
-            # Parent-Child Relation
             if node.parent_id and node.parent_id != "root":
                 relations.append(Relation(
                     source_id=node.parent_id,
@@ -61,21 +54,36 @@ class GraphExtractor:
 
         # 2. Semantic Extraction (Parallel)
         import asyncio
-        tasks = [self._extract_from_chunk_async(chunk) for chunk in chunks]
-        results = await asyncio.gather(*tasks)
+        total = len(chunks)
+        completed = 0
+
+        # Start all tasks
+        futures = [asyncio.ensure_future(self._extract_from_chunk_async(chunk)) for chunk in chunks]
+        
+        # Monitor completion
+        for future in asyncio.as_completed(futures):
+            await future
+            completed += 1
+            yield {
+                "type": "progress",
+                "stage": "Extraction",
+                "current": completed,
+                "total": total,
+                "status": f"Extracting entities: {completed}/{total} chunks"
+            }
+
+        # Gather results (already finished)
+        results = await asyncio.gather(*futures)
 
         # Merge results
         for chunk, extracted in zip(chunks, results):
-            # Merge extracted entities
             for ent_dict in extracted.get("entities", []):
                 eid = ent_dict.get("id")
                 etype = ent_dict.get("type")
                 edescr = ent_dict.get("description", "")
-                
                 if not eid: continue
                 
                 if eid in entities:
-                    # Merge? For now, just append description or ignored
                     existing = entities[eid]
                     if len(existing.description) < len(edescr):
                          existing.description = edescr
@@ -89,13 +97,11 @@ class GraphExtractor:
                         source_chunk_ids=[chunk.id]
                     )
             
-            # Merge extracted relations
             for rel_dict in extracted.get("relations", []):
                 src = rel_dict.get("source")
                 tgt = rel_dict.get("target")
                 rtype = rel_dict.get("type")
                 rdescr = rel_dict.get("description", "")
-                
                 if src and tgt:
                     relations.append(Relation(
                         source_id=src,
@@ -105,7 +111,9 @@ class GraphExtractor:
                         source_chunk_ids=[chunk.id]
                     ))
                     
-        return list(entities.values()), relations
+        yield {"type": "result", "entities": list(entities.values()), "relations": relations}
+
+
 
     async def _extract_from_chunk_async(self, chunk: FinalChunk) -> Dict[str, Any]:
         prompt = (

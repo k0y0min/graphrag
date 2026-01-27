@@ -13,6 +13,12 @@ try:
 except ImportError:
     pass
 
+try:
+    from aiolimiter import AsyncLimiter
+except ImportError:
+    AsyncLimiter = None
+
+
 # --- Logging Setup ---
 # We will setup a centralized logger in run_pipeline, but modules can use getLogger
 logger = logging.getLogger(__name__)
@@ -41,7 +47,7 @@ class LLMBackend(ABC):
 # --- Implementations ---
 
 class GeminiBackend(LLMBackend):
-    def __init__(self, model_name: str = "gemma-3-12b-it", api_key: Optional[str] = None):
+    def __init__(self, model_name: str = "gemini-3-flash-preview", api_key: Optional[str] = None):
         import google.generativeai as genai
         self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
         if not self.api_key:
@@ -50,11 +56,13 @@ class GeminiBackend(LLMBackend):
         self.model = genai.GenerativeModel(model_name)
         self.embedding_model = "models/text-embedding-004"
         self.model_name = model_name
-
-    def generate(self, prompt: str, schema: Optional[Any] = None) -> str | Dict[str, Any]:
-        # Synchronous version
-        time.sleep(2.0) # Rate limit
         
+        # Rate Limiting setup
+        rpm_limit = int(os.getenv("GEMINI_RPM_LIMIT", "15"))
+        self.limiter = AsyncLimiter(rpm_limit, 60) if AsyncLimiter else None
+        
+    def generate(self, prompt: str, schema: Optional[Any] = None) -> str | Dict[str, Any]:
+        # Synchronous version (minimal fallback)
         generation_config = {}
         is_gemma = "gemma" in self.model_name.lower()
         
@@ -74,9 +82,13 @@ class GeminiBackend(LLMBackend):
             return ""
 
     async def generate_async(self, prompt: str, schema: Optional[Any] = None) -> str | Dict[str, Any]:
-        # Async version
-        # Note: No explicit sleep needed here, but we might want rate limiting semaphore if running many in parallel.
-        # For now, let's rely on API or handle RateLimitError if it happens.
+        # Async version with Rate Limiting
+        if self.limiter:
+            async with self.limiter:
+                return await self._generate_internal_async(prompt, schema)
+        return await self._generate_internal_async(prompt, schema)
+
+    async def _generate_internal_async(self, prompt: str, schema: Optional[Any] = None) -> str | Dict[str, Any]:
         
         generation_config = {}
         is_gemma = "gemma" in self.model_name.lower()
@@ -95,10 +107,12 @@ class GeminiBackend(LLMBackend):
                 )
                 return self._parse_response(response, schema, is_gemma)
             else:
-                return await super().generate_async(prompt, schema)
+                # Fallback to thread pool if async generate is not available
+                return await asyncio.to_thread(self.generate, prompt, schema)
         except Exception as e:
             logger.error(f"Gemini async generate error: {e}")
             return ""
+
 
     def _parse_response(self, response, schema, is_gemma):
         text = response.text
@@ -127,6 +141,13 @@ class GeminiBackend(LLMBackend):
         except Exception as e:
             logger.error(f"Gemini embed error: {e}")
             return []
+
+    async def embed_async(self, text: str) -> List[float]:
+        if self.limiter:
+            async with self.limiter:
+                return await asyncio.to_thread(self.embed, text)
+        return await asyncio.to_thread(self.embed, text)
+
 
     def get_perplexity(self, text: str) -> float:
         return 0.0

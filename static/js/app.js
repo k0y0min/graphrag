@@ -10,6 +10,8 @@ const ingestBtn = document.getElementById('ingest-btn');
 const ingestText = document.getElementById('ingest-text');
 const clearDbBtn = document.getElementById('clear-db-btn');
 const ingestStatus = document.getElementById('ingest-status');
+const progressContainer = document.getElementById('progress-container');
+
 
 const queryBtn = document.getElementById('query-btn');
 const queryInput = document.getElementById('query-input');
@@ -177,33 +179,72 @@ ingestBtn.addEventListener('click', async () => {
 
     ingestBtn.disabled = true;
     ingestBtn.innerHTML = '<i data-lucide="loader-2" class="spin"></i> Processing...';
-    lucide.createIcons(); // Refresh icons
-    ingestStatus.innerText = 'Extracting entities & building graph...';
+    lucide.createIcons();
+    ingestStatus.innerText = '';
     ingestStatus.className = 'status-msg';
+    progressContainer.classList.remove('hidden');
+
 
     try {
-        const res = await fetch('/ingest', {
+        const response = await fetch('/ingest', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 text: text,
-                clear_db: false // Always false now as we have a dedicated button
+                clear_db: false
             })
         });
 
-        const data = await res.json();
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
 
-        if (data.status === 'success') {
-            ingestStatus.innerText = `Success! Processed ${data.results.nodes_processed} document chunks, extracted ${data.results.entities_extracted} entities.`;
-            ingestStatus.classList.add('success');
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
 
-            if (data.results.entities && data.results.relations) {
-                updateGraphFromIngest(data.results);
+            buffer += decoder.decode(value, { stream: true });
+
+            // Process SSE formatted data (data: {...}\n\n)
+            let lines = buffer.split('\n');
+            buffer = lines.pop(); // Keep partial last line
+
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    const data = JSON.parse(line.substring(6));
+
+                    if (data.type === 'progress') {
+                        // Switch from indeterminate to functional
+                        const progressBar = progressContainer.querySelector('.progress-bar');
+                        progressBar.classList.remove('indeterminate');
+
+                        // Calculate percentage for this stage
+                        const stagePercent = data.total > 0 ? (data.current / data.total) * 100 : data.progress;
+                        progressBar.style.width = `${stagePercent}%`;
+
+                        // Granular status text
+                        let statusText = data.status;
+                        if (data.stage && data.total > 0) {
+                            const unit = data.stage === 'Hierarchy' ? 'Batch' : 'Chunk';
+                            statusText = `${data.stage}: ${unit} ${data.current} of ${data.total}`;
+                        }
+                        ingestStatus.innerText = statusText;
+                    } else if (data.type === 'result') {
+
+
+                        // Final success
+                        ingestStatus.innerText = `Success! Processed ${data.results.nodes_processed} document chunks, extracted ${data.results.entities_extracted} entities.`;
+                        ingestStatus.classList.add('success');
+
+                        if (data.results.entities && data.results.relations) {
+                            updateGraphFromIngest(data.results);
+                        }
+                        ingestText.value = '';
+                    } else if (data.type === 'error') {
+                        throw new Error(data.detail || 'Unknown error');
+                    }
+                }
             }
-
-            ingestText.value = '';
-        } else {
-            throw new Error(data.detail || 'Unknown error');
         }
     } catch (e) {
         ingestStatus.innerText = `Error: ${e.message}`;
@@ -211,8 +252,20 @@ ingestBtn.addEventListener('click', async () => {
     } finally {
         ingestBtn.disabled = false;
         ingestBtn.innerHTML = '<i data-lucide="upload-cloud"></i> Ingest';
+
+        // Keep status visible, hide bar after a delay 
+        setTimeout(() => {
+            progressContainer.classList.add('hidden');
+            const progressBar = progressContainer.querySelector('.progress-bar');
+            progressBar.classList.remove('indeterminate');
+            progressBar.style.width = '0%';
+        }, 1000);
+
+
         lucide.createIcons();
     }
+
+
 });
 
 // Fit Button

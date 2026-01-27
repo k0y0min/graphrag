@@ -39,6 +39,8 @@ class GraphRAGPipeline:
         import asyncio
         doc_id = str(uuid.uuid4())[:8]
         
+        yield {"progress": 0, "status": "Preparing ingestion...", "type": "progress", "stage": "Preparation", "current": 0, "total": 1}
+
         temp_dir = "temp_ingestion"
         if not os.path.exists(temp_dir):
             os.makedirs(temp_dir)
@@ -53,64 +55,74 @@ class GraphRAGPipeline:
             f.write(text)
         
         try:
-            # 1. Ingestion (Async)
-            line_map = LineMap(input_filename)
+            # 1. Ingestion (Async Generator)
             detector = HierarchyDetector(self.llm_service.extractor)
-            
-            # Async detection
-            roles = await detector.detect_async(line_map, batch_size=20)
+            line_map = LineMap(input_filename)
+            roles = {}
+            async for update in detector.detect_async(line_map, batch_size=20):
+                if update["type"] == "progress":
+                    yield update
+                else:
+                    roles = update["data"]
             
             tree_builder = DocumentTreeBuilder()
             nodes = tree_builder.build(line_map, roles, doc_id=doc_id)
 
-            # 2. Chunking (Still Sync for now as it's sequential/CPU bound per document)
-            # We could offload to thread if needed, but it's local model inference which releases GIL.
-            # Ideally we run this in a thread executor to not block loop during heavy PPL calc.
-            
+            # 2. Chunking
+            yield {"progress": 100, "status": "Optimizing semantic chunks...", "type": "progress", "stage": "Chunking", "current": 1, "total": 1}
             injector = AncestryInjector()
             sentences = injector.inject(nodes)
             
             chunker = PerplexityChunker(self.llm_service.chunker, max_tokens=100, logger=self.logger)
-            
-            # Offload chunking to thread to keep loop responsive
             chunks = await asyncio.to_thread(chunker.chunk, sentences)
 
-            # 3. Extraction (Async)
+            # 3. Extraction (Async Generator)
             extractor = GraphExtractor(self.llm_service.extractor)
-            entities, relations = await extractor.extract_async(chunks, nodes)
+            entities, relations = [], []
+            async for update in extractor.extract_async(chunks, nodes):
+                if update["type"] == "progress":
+                    yield update
+                else:
+                    entities = update["entities"]
+                    relations = update["relations"]
 
-            # 4. Community Detection (Sync - fast enough or offload)
+            # 4. Community Detection
+            yield {"progress": 100, "status": "Detecting knowledge communities...", "type": "progress", "stage": "Communities", "current": 1, "total": 1}
             community_map = detect_communities(entities, relations)
             for e in entities:
                 if e.id in community_map:
                     e.metadata["community_id"] = community_map[e.id]
 
-            # 5. Storage (Sync - likely IO bound but fast local DB)
-            # Use persistent storage instance
+            # 5. Storage
+            yield {"progress": 100, "status": "Saving to knowledge graph...", "type": "progress", "stage": "Storage", "current": 1, "total": 1}
             if clear_db:
                 self.storage.clear()
             self.storage.ingest(entities, relations)
             
-            return {
-                "nodes_processed": len(nodes),
-                "chunks_created": len(chunks),
-                "entities_extracted": len(entities),
-                "relations_extracted": len(relations),
-                "entities": [vars(e) for e in entities],
-                "relations": [vars(r) for r in relations]
+            yield {
+                "progress": 100,
+                "status": "Ingestion complete!",
+                "type": "result",
+                "results": {
+                    "nodes_processed": len(nodes),
+                    "chunks_created": len(chunks),
+                    "entities_extracted": len(entities),
+                    "relations_extracted": len(relations),
+                    "entities": [vars(e) for e in entities],
+                    "relations": [vars(r) for r in relations]
+                }
             }
         finally:
             if os.path.exists(input_filename):
                 try:
                     os.remove(input_filename)
-                    self.logger.info(f"Cleaned up temporary file: {input_filename}")
-                except Exception as e:
-                    self.logger.error(f"Failed to cleanup {input_filename}: {e}")
+                except: pass
             
             try:
                 if os.path.exists(temp_dir) and not os.listdir(temp_dir):
                     os.rmdir(temp_dir)
             except: pass
+
 
     def ingest_text(self, text: str, input_filename=None, clear_db=False):
         import uuid

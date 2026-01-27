@@ -45,52 +45,40 @@ class HierarchyDetector:
     def __init__(self, llm: LLMBackend):
         self.llm = llm
 
-    async def detect_async(self, line_map: LineMap, batch_size: int = 50) -> Dict[int, str]:
+    async def detect_async(self, line_map: LineMap, batch_size: int = 50):
         """
-        Async version of detect with parallel batch processing.
-        Uses pre-scanning of headers to provide context state for batches.
+        Async generator version of detect with parallel batch processing.
+        Yields progress updates, final yield is the result mapping.
         """
         line_roles = {}
         
-        # 1. Pre-scan for explicit headers to build state map
-        # Map: line_index -> list of recent headers (state)
-        # This allows each batch to have correct starting context without sequential dependency
+        # 1. Pre-scan for explicit headers
         header_map = {}
         current_context = []
-        
-        # We scan all lines for deterministic headers
-        # This replicates the logic: if stripped.startswith('#') -> Header
         for i, line in enumerate(line_map.get_lines(), 1):
             if line.content.strip().startswith('#'):
                 current_context.append(line.content.strip())
                 if len(current_context) > 3:
                      current_context.pop(0)
-            header_map[i] = list(current_context) # Snapshot state at this line
+            header_map[i] = list(current_context)
 
+        # 2. Prepare Tasks
         tasks = []
-        batch_infos = [] # Keep track of metadata for each task
-
-        # 2. Create Tasks
+        batch_infos = []
         current_id = 1
         while current_id <= line_map.total_lines:
             batch = line_map.get_batch(current_id, batch_size)
-            if not batch:
-                break
-                
-            non_empty_batch = [l for l in batch if l.content]
+            if not batch: break
             
+            non_empty_batch = [l for l in batch if l.content]
             if not non_empty_batch:
                 current_id += batch_size
                 continue
 
-            # Get state from the start of the batch
-            # We use the state snapshot from the line *before* the batch starts, or empty if start
             start_line_idx = non_empty_batch[0].id
             state = header_map.get(start_line_idx - 1, [])
-            
             prompt = self._construct_prompt(non_empty_batch, state)
             
-            # Define schema (same as sync)
             class LineRole(typing_extensions.TypedDict):
                 id: int
                 role: str 
@@ -99,14 +87,39 @@ class HierarchyDetector:
 
             tasks.append(self.llm.generate_async(prompt, schema=BatchResponse))
             batch_infos.append(non_empty_batch)
-            
             current_id += batch_size
 
-        # 3. Run Parallel
+        if not tasks:
+             yield {"type": "result", "data": line_roles}
+             return
+
+        # 3. Run Parallel with Granular Yielding
         import asyncio
-        results = await asyncio.gather(*tasks)
+        total = len(tasks)
+        completed = 0
+
+        async def wrap_task(task_coro):
+            return await task_coro
+
+        # Start all tasks
+        futures = [asyncio.ensure_future(t) for t in tasks]
         
-        # 4. Process Results
+        # Monitor completion
+        for future in asyncio.as_completed(futures):
+            await future
+            completed += 1
+            yield {
+                "type": "progress",
+                "stage": "Hierarchy",
+                "current": completed,
+                "total": total,
+                "status": f"Analyzing hierarchy: {completed}/{total} batches"
+            }
+        
+        # 4. Gather all (already finished)
+        results = await asyncio.gather(*futures)
+        
+        # 5. Process Results
         for batch_data, response in zip(batch_infos, results):
             llm_mappings = {}
             if isinstance(response, dict) and "mappings" in response:
@@ -116,10 +129,9 @@ class HierarchyDetector:
             
             for item in batch_data:
                 lid = item.id
+                role = "Text" 
                 content = item.content
                 stripped = content.strip()
-                role = "Text" 
-                
                 if stripped.startswith('#'):
                     role = "Header"
                 elif stripped.startswith(('* ', '- ')) or (stripped and stripped[0].isdigit() and stripped.endswith('.')):
@@ -131,10 +143,11 @@ class HierarchyDetector:
                              role = "Text"
                          else:
                              role = proposed_role
-                             
                 line_roles[lid] = role
                 
-        return line_roles
+        yield {"type": "result", "data": line_roles}
+
+
 
     def detect(self, line_map: LineMap, batch_size: int = 50) -> Dict[int, str]:
         """
