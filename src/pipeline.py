@@ -34,6 +34,20 @@ class GraphRAGPipeline:
             extraction_model=extraction_backend
         )
 
+    def _report_progress(self, stage: str, current: int, total: int, status: str):
+        """Standardized progress update helper"""
+        # Calculate a global-ish percentage based on stage? 
+        # Or just let the stage-specific percentage handle it.
+        # Frontend prefers stage-specific current/total.
+        return {
+            "type": "progress",
+            "stage": stage,
+            "current": current,
+            "total": total,
+            "status": status,
+            "progress": (current / total * 100) if total > 0 else 100
+        }
+
     async def ingest_async(self, text: str, input_filename=None, clear_db=False):
         import uuid
         import asyncio
@@ -68,11 +82,13 @@ class GraphRAGPipeline:
             nodes = tree_builder.build(line_map, roles, doc_id=doc_id)
 
             # 2. Chunking
+            yield self._report_progress("Chunking", 0, 1, "Optimizing semantic chunks...")
             injector = AncestryInjector()
             sentences = injector.inject(nodes)
             
             chunker = PerplexityChunker(self.llm_service.chunker, max_tokens=100, logger=self.logger)
             chunks = await asyncio.to_thread(chunker.chunk, sentences)
+            yield self._report_progress("Chunking", 1, 1, f"Semantic chunking complete ({len(chunks)} chunks)")
 
             # 3. Extraction (Async Generator)
             extractor = GraphExtractor(self.llm_service.extractor)
@@ -85,15 +101,19 @@ class GraphRAGPipeline:
                     relations = update["relations"]
 
             # 4. Community Detection
+            yield self._report_progress("Communities", 0, 1, "Detecting knowledge communities...")
             community_map = detect_communities(entities, relations)
             for e in entities:
                 if e.id in community_map:
                     e.metadata["community_id"] = community_map[e.id]
+            yield self._report_progress("Communities", 1, 1, "Community detection complete")
 
             # 5. Storage
+            yield self._report_progress("Storage", 0, 1, "Saving to knowledge graph...")
             if clear_db:
                 self.storage.clear()
             self.storage.ingest(entities, relations)
+            yield self._report_progress("Storage", 1, 1, "Storage complete")
             
             yield {
                 "progress": 100,
@@ -118,6 +138,7 @@ class GraphRAGPipeline:
                 if os.path.exists(temp_dir) and not os.listdir(temp_dir):
                     os.rmdir(temp_dir)
             except: pass
+
 
 
     def ingest_text(self, text: str, input_filename=None, clear_db=False):

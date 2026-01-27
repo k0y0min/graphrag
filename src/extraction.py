@@ -33,29 +33,11 @@ class GraphExtractor:
         entities: Dict[str, Entity] = {}
         relations: List[Relation] = []
 
-        # 1. Structural Extraction
-        for node in nodes:
-            node_type = node.metadata.get("type", "content").capitalize()
-            entity = Entity(
-                id=node.id,
-                type=f"Structure_{node_type}",
-                description=node.text[:100],
-                source_chunk_ids=[]
-            )
-            entities[node.id] = entity
-            
-            if node.parent_id and node.parent_id != "root":
-                relations.append(Relation(
-                    source_id=node.parent_id,
-                    target_id=node.id,
-                    type="PARENT_OF",
-                    description="Structural hierarchy"
-                ))
-
-        # 2. Semantic Extraction (Parallel)
+        # 1. Semantic Extraction (Parallel)
         import asyncio
         total = len(chunks)
         completed = 0
+
 
         # Start all tasks
         futures = [asyncio.ensure_future(self._extract_from_chunk_async(chunk)) for chunk in chunks]

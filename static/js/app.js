@@ -16,7 +16,7 @@ const progressContainer = document.getElementById('progress-container');
 const queryBtn = document.getElementById('query-btn');
 const queryInput = document.getElementById('query-input');
 const queryResults = document.getElementById('query-results');
-const showStructureCheck = document.getElementById('show-structure-check');
+
 
 const tabBtns = document.querySelectorAll('.tab-btn');
 const tabContents = document.querySelectorAll('.tab-content');
@@ -45,34 +45,15 @@ function initGraph() {
     nodesDS = new vis.DataSet([]);
     edgesDS = new vis.DataSet([]);
 
-    // DataView for filtering
+    // DataView (no longer filtering structure nodes)
     nodesView = new vis.DataView(nodesDS, {
-        filter: (node) => {
-            const isStructure = ['Structure_Header', 'Structure_Content', 'content', 'header'].includes(node.type);
-            if (isStructure && !showStructureCheck.checked) {
-                return false;
-            }
-            return true;
-        }
+        filter: (node) => true
     });
 
-    // edges should also be filtered if their endpoints are hidden? 
-    // Vis network handles that automatically usually, but let's be safe.
     edgesView = new vis.DataView(edgesDS, {
-        filter: (edge) => {
-            const fromNode = nodesDS.get(edge.from);
-            const toNode = nodesDS.get(edge.to);
-            if (!fromNode || !toNode) return false;
-
-            const isFromStructure = ['Structure_Header', 'Structure_Content', 'content', 'header'].includes(fromNode.type);
-            const isToStructure = ['Structure_Header', 'Structure_Content', 'content', 'header'].includes(toNode.type);
-
-            if (!showStructureCheck.checked && (isFromStructure || isToStructure)) {
-                return false;
-            }
-            return true;
-        }
+        filter: (edge) => true
     });
+
 
     const data = {
         nodes: nodesView,
@@ -223,11 +204,14 @@ ingestBtn.addEventListener('click', async () => {
                         progressBar.style.width = `${stagePercent}%`;
 
                         // Granular status text
-                        let statusText = data.status;
-                        if (data.stage && data.total > 0) {
+                        let statusText = data.status || 'Processing...';
+                        if (data.stage === 'Hierarchy' && data.status.includes('Lines')) {
+                            statusText = data.status; // Keep the line range text
+                        } else if (data.stage && data.total > 1) {
                             const unit = data.stage === 'Hierarchy' ? 'Batch' : 'Chunk';
                             statusText = `${data.stage}: ${unit} ${data.current} of ${data.total}`;
                         }
+
                         ingestStatus.innerText = statusText;
                     } else if (data.type === 'result') {
 
@@ -273,24 +257,6 @@ document.getElementById('fit-btn').addEventListener('click', () => {
     if (network) network.fit({ animation: true });
 });
 
-// Structure Toggle
-showStructureCheck.addEventListener('change', () => {
-    updateNodeVisibility();
-    // Refresh views if necessary (DataView usually handles this, but let's be explicit)
-    nodesView.refresh();
-    edgesView.refresh();
-    if (network) network.fit({ animation: true });
-});
-
-function updateNodeVisibility() {
-    const showStructure = showStructureCheck.checked;
-
-    // DataView filter already handles the logic, 
-    // but sometimes explicit refresh or hidden property update helps.
-    // Since we're using DataView, we just need to refresh it.
-    nodesView.refresh();
-    edgesView.refresh();
-}
 
 function updateGraphFromIngest(results) {
     const { entities, relations } = results;
@@ -301,9 +267,9 @@ function updateGraphFromIngest(results) {
             nodesDS.update({
                 id: ent.id,
                 label: ent.id,
-                type: ent.type, // Store type for filtering
+                type: ent.type, // Store type
                 title: `Type: ${ent.type}\nDesc: ${ent.description || ''}`,
-                color: ent.type === 'Structure_Header' ? '#ef4444' : '#6366f1'
+                color: '#6366f1'
             });
         } catch (e) { }
     });
@@ -319,7 +285,7 @@ function updateGraphFromIngest(results) {
                 to: rel.target_id,
                 label: rel.type,
                 title: rel.description,
-                hidden: isParentOf ? !showStructureCheck.checked : false
+                hidden: false
             });
         } catch (e) { }
     });

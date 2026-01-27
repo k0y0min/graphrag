@@ -98,26 +98,34 @@ class HierarchyDetector:
         total = len(tasks)
         completed = 0
 
-        async def wrap_task(task_coro):
-            return await task_coro
+        # We need to map futures to their line ranges
+        future_to_range = {}
+        for i, task_coro in enumerate(tasks):
+            fut = asyncio.ensure_future(task_coro)
+            batch = batch_infos[i]
+            line_range = (batch[0].id, batch[-1].id)
+            future_to_range[fut] = line_range
 
-        # Start all tasks
-        futures = [asyncio.ensure_future(t) for t in tasks]
-        
         # Monitor completion
-        for future in asyncio.as_completed(futures):
-            await future
+        for future in asyncio.as_completed(future_to_range.keys()):
+            result = await future
             completed += 1
+            
+            # Find which future just completed
+            # Note: future in as_completed is usually the original future if it's already a future
+            start, end = future_to_range.get(future, (0, 0))
+            
             yield {
                 "type": "progress",
                 "stage": "Hierarchy",
                 "current": completed,
                 "total": total,
-                "status": f"Analyzing hierarchy: {completed}/{total} batches"
+                "status": f"Analyzing hierarchy: Lines {start}-{end} ({completed}/{total} batches)"
             }
         
-        # 4. Gather all (already finished)
-        results = await asyncio.gather(*futures)
+        # 4. Gather results (using the futures we already started)
+        results = await asyncio.gather(*future_to_range.keys())
+
         
         # 5. Process Results
         for batch_data, response in zip(batch_infos, results):
