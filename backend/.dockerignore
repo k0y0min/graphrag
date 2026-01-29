@@ -10,3 +10,6 @@ logs
 demo_db
 demo_db.wal
 models
+.pytest_cache
+*.log
+local_data
