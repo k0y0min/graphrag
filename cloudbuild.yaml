@@ -1,0 +1,95 @@
+steps:
+  # 1. Pull previous images for caching
+  - name: 'gcr.io/cloud-builders/docker'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        docker pull gcr.io/$PROJECT_ID/graphrag-backend:latest || exit 0
+        docker pull gcr.io/$PROJECT_ID/graphrag-frontend:latest || exit 0
+    id: 'pull-images'
+
+  # 2. Build Backend Image (with caching)
+  - name: 'gcr.io/cloud-builders/docker'
+    args: [
+      'build', 
+      '-t', 'gcr.io/$PROJECT_ID/graphrag-backend:latest',
+      '-t', 'gcr.io/$PROJECT_ID/graphrag-backend:$SHORT_SHA',
+      '--cache-from', 'gcr.io/$PROJECT_ID/graphrag-backend:latest',
+      './backend'
+    ]
+    id: 'build-backend'
+    waitFor: ['pull-images']
+
+  # 3. Build & Run Tests (using the built image)
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['run', 'gcr.io/$PROJECT_ID/graphrag-backend:latest', 'pytest', 'tests/test_api.py']
+    id: 'run-tests'
+    waitFor: ['build-backend']
+
+  # 4. Build Frontend Image (with caching)
+  - name: 'gcr.io/cloud-builders/docker'
+    args: [
+      'build', 
+      '-t', 'gcr.io/$PROJECT_ID/graphrag-frontend:latest',
+      '-t', 'gcr.io/$PROJECT_ID/graphrag-frontend:$SHORT_SHA',
+      '--cache-from', 'gcr.io/$PROJECT_ID/graphrag-frontend:latest',
+      './frontend'
+    ]
+    id: 'build-frontend'
+    waitFor: ['pull-images']
+
+  # 5. Push images
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/graphrag-backend:latest']
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/graphrag-backend:$SHORT_SHA']
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/graphrag-frontend:latest']
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/graphrag-frontend:$SHORT_SHA']
+    id: 'push-images'
+    waitFor: ['run-tests', 'build-frontend']
+
+  # 6. Deploy Backend
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'graphrag-backend'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/graphrag-backend:$SHORT_SHA'
+      - '--region'
+      - 'us-central1'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+      - '--memory'
+      - '4Gi'
+      - '--cpu'
+      - '2'
+    id: 'deploy-backend'
+    waitFor: ['push-images']
+
+  # 7. Deploy Frontend
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        BACKEND_URL=$(gcloud run services describe graphrag-backend --region us-central1 --format 'value(status.url)')
+        gcloud run deploy graphrag-frontend \
+          --image gcr.io/$PROJECT_ID/graphrag-frontend:$SHORT_SHA \
+          --region us-central1 \
+          --platform managed \
+          --allow-unauthenticated \
+          --set-env-vars BACKEND_URL=$$BACKEND_URL
+    id: 'deploy-frontend'
+    waitFor: ['deploy-backend']
+
+images:
+  - 'gcr.io/$PROJECT_ID/graphrag-backend:latest'
+  - 'gcr.io/$PROJECT_ID/graphrag-backend:$SHORT_SHA'
+  - 'gcr.io/$PROJECT_ID/graphrag-frontend:latest'
+  - 'gcr.io/$PROJECT_ID/graphrag-frontend:$SHORT_SHA'
