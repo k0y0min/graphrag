@@ -16,6 +16,10 @@ COPY requirements.txt .
 # Install dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Bake model into image
+ARG HF_TOKEN
+RUN python -c "import os; from transformers import AutoModelForCausalLM, AutoTokenizer; token = os.getenv('HF_TOKEN'); model_id='Qwen/Qwen3-0.6B'; AutoTokenizer.from_pretrained(model_id, cache_dir='./models', token=token); AutoModelForCausalLM.from_pretrained(model_id, cache_dir='./models', token=token)"
+
 # Copy the application code
 COPY . .
 
@@ -27,4 +31,4 @@ ENV PYTHONUNBUFFERED=1
 ENV DB_PATH=db/demo_db
 
 # Command to run the API (downloads model first using runtime env vars)
-CMD sh -c "python download_model.py && uvicorn api:app --host 0.0.0.0 --port ${PORT:-8000}"
+CMD sh -c "uvicorn api:app --host 0.0.0.0 --port ${PORT:-8080}"

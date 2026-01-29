@@ -1,25 +1,29 @@
 steps:
   # 1. Build Backend Image (passing HF_TOKEN as build-arg)
   - name: 'gcr.io/cloud-builders/docker'
+    entrypoint: 'bash'
     secretEnv: ['HF_TOKEN']
-    args: [
-      'build', 
-      '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-backend:latest',
-      '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-backend:$SHORT_SHA',
-      '--build-arg', 'HF_TOKEN=$$HF_TOKEN',
-      './backend'
-    ]
+    args:
+      - '-c'
+      - |
+        docker build \
+          -t ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-backend:latest \
+          -t ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-backend:$SHORT_SHA \
+          --build-arg HF_TOKEN=$$HF_TOKEN \
+          ./backend
     id: 'build-backend'
 
   # 2. Run Tests
   - name: 'gcr.io/cloud-builders/docker'
+    entrypoint: 'bash'
     secretEnv: ['GOOGLE_API_KEY']
-    args: [
-      'run', 
-      '-e', 'GOOGLE_API_KEY=$$GOOGLE_API_KEY',
-      '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-backend:$SHORT_SHA', 
-      'pytest', 'tests/test_api.py'
-    ]
+    args:
+      - '-c'
+      - |
+        docker run \
+          -e GOOGLE_API_KEY=$$GOOGLE_API_KEY \
+          ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-backend:$SHORT_SHA \
+          pytest tests/test_api.py
     id: 'run-tests'
     waitFor: ['build-backend']
 

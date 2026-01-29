@@ -564,8 +564,6 @@ input[type=range]:active::-webkit-slider-thumb {
 }
 
 .spin {
-    width: 48px;
-    height: 48px;
     color: var(--accent);
     animation: spin 1s linear infinite;
 }
