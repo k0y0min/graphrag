@@ -16,13 +16,6 @@ COPY requirements.txt .
 # Install dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Pre-download Qwen model to bake it into the image
-# This ensures the model is available at runtime without internet access
-RUN python -c "from transformers import AutoModelForCausalLM, AutoTokenizer; \
-    model_id='Qwen/Qwen3-0.6B'; \
-    AutoTokenizer.from_pretrained(model_id, cache_dir='./models'); \
-    AutoModelForCausalLM.from_pretrained(model_id, cache_dir='./models')"
-
 # Copy the application code
 COPY . .
 
@@ -33,5 +26,5 @@ EXPOSE 8000
 ENV PYTHONUNBUFFERED=1
 ENV DB_PATH=db/demo_db
 
-# Command to run the API
-CMD sh -c "uvicorn api:app --host 0.0.0.0 --port ${PORT:-8000}"
+# Command to run the API (downloads model first using runtime env vars)
+CMD sh -c "python download_model.py && uvicorn api:app --host 0.0.0.0 --port ${PORT:-8000}"
