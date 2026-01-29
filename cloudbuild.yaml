@@ -93,3 +93,6 @@ images:
   - 'gcr.io/$PROJECT_ID/graphrag-backend:$SHORT_SHA'
   - 'gcr.io/$PROJECT_ID/graphrag-frontend:latest'
   - 'gcr.io/$PROJECT_ID/graphrag-frontend:$SHORT_SHA'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
