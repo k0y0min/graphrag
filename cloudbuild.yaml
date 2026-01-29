@@ -1,27 +1,15 @@
 steps:
-  # 1. Pull previous images for caching
-  - name: 'gcr.io/cloud-builders/docker'
-    entrypoint: 'bash'
-    args:
-      - '-c'
-      - |
-        docker pull ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-backend:latest || exit 0
-        docker pull ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-frontend:latest || exit 0
-    id: 'pull-images'
-
-  # 2. Build Backend Image (with caching)
+  # 1. Build Backend Image
   - name: 'gcr.io/cloud-builders/docker'
     args: [
       'build', 
       '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-backend:latest',
       '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-backend:$SHORT_SHA',
-      '--cache-from', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-backend:latest',
       './backend'
     ]
     id: 'build-backend'
-    waitFor: ['pull-images']
 
-  # 3. Build & Run Tests (using the built image with debug info)
+  # 2. Build & Run Tests (using the built image with debug info)
   - name: 'gcr.io/cloud-builders/docker'
     entrypoint: 'sh'
     args:
@@ -34,19 +22,17 @@ steps:
     id: 'run-tests'
     waitFor: ['build-backend']
 
-  # 4. Build Frontend Image (with caching)
+  # 3. Build Frontend Image
   - name: 'gcr.io/cloud-builders/docker'
     args: [
       'build', 
       '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-frontend:latest',
       '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-frontend:$SHORT_SHA',
-      '--cache-from', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-frontend:latest',
       './frontend'
     ]
     id: 'build-frontend'
-    waitFor: ['pull-images']
 
-  # 5. Push images
+  # 4. Push images
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-backend:latest']
   - name: 'gcr.io/cloud-builders/docker'
@@ -58,7 +44,7 @@ steps:
     id: 'push-images'
     waitFor: ['run-tests', 'build-frontend']
 
-  # 6. Deploy Backend
+  # 5. Deploy Backend
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
@@ -79,7 +65,7 @@ steps:
     id: 'deploy-backend'
     waitFor: ['push-images']
 
-  # 7. Deploy Frontend
+  # 6. Deploy Frontend
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: 'bash'
     args:
@@ -103,7 +89,7 @@ images:
 
 substitutions:
   _REGION: us-central1
-  _REPO: graphrag-repo # Replace this with your actual Artifact Registry repository name
+  _REPO: graphrag-repo
 
 options:
   logging: CLOUD_LOGGING_ONLY
