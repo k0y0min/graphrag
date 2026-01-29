@@ -21,9 +21,16 @@ steps:
     id: 'build-backend'
     waitFor: ['pull-images']
 
-  # 3. Build & Run Tests (using the built image)
+  # 3. Build & Run Tests (using the built image with debug info)
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['run', 'gcr.io/$PROJECT_ID/graphrag-backend:latest', 'pytest', 'tests/test_api.py']
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        echo "Listing files in image:"
+        docker run gcr.io/$PROJECT_ID/graphrag-backend:$SHORT_SHA ls -R /app
+        echo "Running pytest:"
+        docker run gcr.io/$PROJECT_ID/graphrag-backend:$SHORT_SHA pytest tests/test_api.py
     id: 'run-tests'
     waitFor: ['build-backend']
 
