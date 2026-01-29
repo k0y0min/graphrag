@@ -5,17 +5,17 @@ steps:
     args:
       - '-c'
       - |
-        docker pull gcr.io/$PROJECT_ID/graphrag-backend:latest || exit 0
-        docker pull gcr.io/$PROJECT_ID/graphrag-frontend:latest || exit 0
+        docker pull ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-backend:latest || exit 0
+        docker pull ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-frontend:latest || exit 0
     id: 'pull-images'
 
   # 2. Build Backend Image (with caching)
   - name: 'gcr.io/cloud-builders/docker'
     args: [
       'build', 
-      '-t', 'gcr.io/$PROJECT_ID/graphrag-backend:latest',
-      '-t', 'gcr.io/$PROJECT_ID/graphrag-backend:$SHORT_SHA',
-      '--cache-from', 'gcr.io/$PROJECT_ID/graphrag-backend:latest',
+      '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-backend:latest',
+      '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-backend:$SHORT_SHA',
+      '--cache-from', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-backend:latest',
       './backend'
     ]
     id: 'build-backend'
@@ -28,9 +28,9 @@ steps:
       - '-c'
       - |
         echo "Listing files in image:"
-        docker run gcr.io/$PROJECT_ID/graphrag-backend:$SHORT_SHA ls -R /app
+        docker run ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-backend:$SHORT_SHA ls -R /app
         echo "Running pytest:"
-        docker run gcr.io/$PROJECT_ID/graphrag-backend:$SHORT_SHA pytest tests/test_api.py
+        docker run ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-backend:$SHORT_SHA pytest tests/test_api.py
     id: 'run-tests'
     waitFor: ['build-backend']
 
@@ -38,9 +38,9 @@ steps:
   - name: 'gcr.io/cloud-builders/docker'
     args: [
       'build', 
-      '-t', 'gcr.io/$PROJECT_ID/graphrag-frontend:latest',
-      '-t', 'gcr.io/$PROJECT_ID/graphrag-frontend:$SHORT_SHA',
-      '--cache-from', 'gcr.io/$PROJECT_ID/graphrag-frontend:latest',
+      '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-frontend:latest',
+      '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-frontend:$SHORT_SHA',
+      '--cache-from', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-frontend:latest',
       './frontend'
     ]
     id: 'build-frontend'
@@ -48,13 +48,13 @@ steps:
 
   # 5. Push images
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'gcr.io/$PROJECT_ID/graphrag-backend:latest']
+    args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-backend:latest']
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'gcr.io/$PROJECT_ID/graphrag-backend:$SHORT_SHA']
+    args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-backend:$SHORT_SHA']
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'gcr.io/$PROJECT_ID/graphrag-frontend:latest']
+    args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-frontend:latest']
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'gcr.io/$PROJECT_ID/graphrag-frontend:$SHORT_SHA']
+    args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-frontend:$SHORT_SHA']
     id: 'push-images'
     waitFor: ['run-tests', 'build-frontend']
 
@@ -66,9 +66,9 @@ steps:
       - 'deploy'
       - 'graphrag-backend'
       - '--image'
-      - 'gcr.io/$PROJECT_ID/graphrag-backend:$SHORT_SHA'
+      - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-backend:$SHORT_SHA'
       - '--region'
-      - 'us-central1'
+      - '${_REGION}'
       - '--platform'
       - 'managed'
       - '--allow-unauthenticated'
@@ -85,10 +85,10 @@ steps:
     args:
       - '-c'
       - |
-        BACKEND_URL=$(gcloud run services describe graphrag-backend --region us-central1 --format 'value(status.url)')
+        BACKEND_URL=$(gcloud run services describe graphrag-backend --region ${_REGION} --format 'value(status.url)')
         gcloud run deploy graphrag-frontend \
-          --image gcr.io/$PROJECT_ID/graphrag-frontend:$SHORT_SHA \
-          --region us-central1 \
+          --image ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-frontend:$SHORT_SHA \
+          --region ${_REGION} \
           --platform managed \
           --allow-unauthenticated \
           --set-env-vars BACKEND_URL=$$BACKEND_URL
@@ -96,10 +96,14 @@ steps:
     waitFor: ['deploy-backend']
 
 images:
-  - 'gcr.io/$PROJECT_ID/graphrag-backend:latest'
-  - 'gcr.io/$PROJECT_ID/graphrag-backend:$SHORT_SHA'
-  - 'gcr.io/$PROJECT_ID/graphrag-frontend:latest'
-  - 'gcr.io/$PROJECT_ID/graphrag-frontend:$SHORT_SHA'
+  - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-backend:latest'
+  - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-backend:$SHORT_SHA'
+  - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-frontend:latest'
+  - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-frontend:$SHORT_SHA'
+
+substitutions:
+  _REGION: us-central1
+  _REPO: graphrag-repo # Replace this with your actual Artifact Registry repository name
 
 options:
   logging: CLOUD_LOGGING_ONLY
