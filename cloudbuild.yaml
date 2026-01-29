@@ -1,24 +1,25 @@
 steps:
-  # 1. Build Backend Image
+  # 1. Build Backend Image (passing HF_TOKEN as build-arg)
   - name: 'gcr.io/cloud-builders/docker'
+    secretEnv: ['HF_TOKEN']
     args: [
       'build', 
       '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-backend:latest',
       '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-backend:$SHORT_SHA',
+      '--build-arg', 'HF_TOKEN=$$HF_TOKEN',
       './backend'
     ]
     id: 'build-backend'
 
-  # 2. Build & Run Tests (using the built image with debug info)
+  # 2. Run Tests
   - name: 'gcr.io/cloud-builders/docker'
-    entrypoint: 'sh'
-    args:
-      - '-c'
-      - |
-        echo "Listing files in image:"
-        docker run ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-backend:$SHORT_SHA ls -R /app
-        echo "Running pytest:"
-        docker run ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-backend:$SHORT_SHA pytest tests/test_api.py
+    secretEnv: ['GOOGLE_API_KEY']
+    args: [
+      'run', 
+      '-e', 'GOOGLE_API_KEY=$$GOOGLE_API_KEY',
+      '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/graphrag-backend:$SHORT_SHA', 
+      'pytest', 'tests/test_api.py'
+    ]
     id: 'run-tests'
     waitFor: ['build-backend']
 
@@ -62,6 +63,8 @@ steps:
       - '4Gi'
       - '--cpu'
       - '2'
+      - '--set-secrets'
+      - 'GOOGLE_API_KEY=GOOGLE_API_KEY:latest'
     id: 'deploy-backend'
     waitFor: ['push-images']
 
@@ -90,6 +93,13 @@ images:
 substitutions:
   _REGION: us-central1
   _REPO: graphrag-repo
+
+availableSecrets:
+  secretManager:
+    - versionName: projects/$PROJECT_ID/secrets/HF_TOKEN/versions/latest
+      env: 'HF_TOKEN'
+    - versionName: projects/$PROJECT_ID/secrets/GOOGLE_API_KEY/versions/latest
+      env: 'GOOGLE_API_KEY'
 
 options:
   logging: CLOUD_LOGGING_ONLY

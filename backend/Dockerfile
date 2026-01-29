@@ -16,8 +16,11 @@ COPY requirements.txt .
 # Install dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Add build argument for Hugging Face token
+ARG HF_TOKEN
+
 # Pre-download Qwen model to bake it into the image
-RUN python -c "from transformers import AutoModelForCausalLM, AutoTokenizer; model_id='Qwen/Qwen3-0.6B'; AutoTokenizer.from_pretrained(model_id, cache_dir='./models'); AutoModelForCausalLM.from_pretrained(model_id, cache_dir='./models')"
+RUN python -c "from transformers import AutoModelForCausalLM, AutoTokenizer; model_id='Qwen/Qwen3-0.6B'; AutoTokenizer.from_pretrained(model_id, cache_dir='./models', token='${HF_TOKEN}'); AutoModelForCausalLM.from_pretrained(model_id, cache_dir='./models', token='${HF_TOKEN}')"
 
 # Copy the application code
 COPY . .
