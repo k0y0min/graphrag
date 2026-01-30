@@ -72,8 +72,33 @@ body {
     -webkit-text-fill-color: transparent;
 }
 
-.brand i {
+.brand i,
+.brand svg {
     color: var(--accent);
+}
+
+.github-link {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary);
+    transition: all 0.2s ease;
+    margin-left: auto;
+    /* Push to right if desirable, or just small margin */
+}
+
+.github-link:hover {
+    color: var(--text-primary);
+    transform: scale(1.1);
+    filter: drop-shadow(0 0 5px var(--accent-glow));
+}
+
+.github-link i,
+.github-link svg {
+    width: 20px;
+    height: 20px;
+    color: inherit;
+    /* Override the specific .brand i color rule above */
 }
 
 /* Tabs */
