@@ -1,15 +1,35 @@
 version: '3.8'
 
 services:
-  api:
-    build: .
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        HF_TOKEN: ${HF_TOKEN}
     ports:
-      - "8000:8000"
+      - "8080:8080"
     volumes:
-      - ./:/app
-      - ./demo_db:/app/demo_db
-      - ./logs:/app/logs
-      - ./models:/app/models
+      - ./backend/db:/app/db
+      - ./backend/logs:/app/logs
+      #- ./backend/models:/app/models
     env_file:
-      - .env
+      - ./backend/.env
+    environment:
+      - PORT=8080
+      - DB_PATH=db/demo_db
+      - CLEAR_DB_ON_STARTUP=true
+      - GEMINI_RPM_LIMIT=1000
+    restart: always
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    environment:
+      - BACKEND_URL=http://localhost:8080
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
     restart: always

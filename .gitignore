@@ -1,10 +1,15 @@
+# Python
 venv/
 __pycache__/
 *.pyc
-.DS_Store
+.pytest_cache/
+
+# Project Specific
 .env
 demo_db/
 demo_db.wal
 logs/
-.pytest_cache/
 models/
+
+# OS
+.DS_Store

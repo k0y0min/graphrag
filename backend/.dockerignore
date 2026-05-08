@@ -1,0 +1,15 @@
+venv
+__pycache__
+*.pyc
+.DS_Store
+.env
+.git
+.github
+README_DEVOPS.md
+logs
+demo_db
+demo_db.wal
+models
+.pytest_cache
+*.log
+local_data
