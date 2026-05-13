@@ -1,27 +1,23 @@
-# Use a slim version of Python as a base
-FROM python:3.10-slim
+# Use python 3.13 as base to match pyproject.toml
+FROM python:3.13-slim
 
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies and uv
 RUN apt-get update && apt-get install -y \
     build-essential \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for better caching
-COPY requirements.txt .
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:${PATH}"
 
-# Install dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy dependency files first
+COPY pyproject.toml uv.lock ./
 
-# Bake model into image
-ARG HF_TOKEN
-RUN python -c "from transformers import AutoModelForCausalLM, AutoTokenizer; \
-    model_id='Qwen/Qwen3-0.6B'; \
-    AutoTokenizer.from_pretrained(model_id, cache_dir='./models', token='$HF_TOKEN'); \
-    AutoModelForCausalLM.from_pretrained(model_id, cache_dir='./models', token='$HF_TOKEN')"
+# Sync dependencies using uv
+RUN uv sync --frozen
 
 # Copy the application code
 COPY . .
@@ -33,5 +29,5 @@ EXPOSE 8080
 ENV PYTHONUNBUFFERED=1
 ENV DB_PATH=db/demo_db
 
-# Command to run the API (downloads model first using runtime env vars)
-CMD sh -c "uvicorn api:app --host 0.0.0.0 --port ${PORT:-8080}"
+# Command to run the API
+CMD sh -c "uv run uvicorn api:app --host 0.0.0.0 --port ${PORT:-8080}"

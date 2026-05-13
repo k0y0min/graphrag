@@ -1,14 +1,13 @@
 :root {
-    --bg-dark: #0f172a;
-    --glass-bg: rgba(30, 41, 59, 0.7);
-    --glass-border: rgba(255, 255, 255, 0.1);
-    --accent: #6366f1;
-    /* Indigo */
-    --accent-glow: rgba(99, 102, 241, 0.4);
-    --text-primary: #f8fafc;
-    --text-secondary: #94a3b8;
-    --success: #10b981;
-    --danger: #ef4444;
+    --bg-dark: #2e3440;
+    --glass-bg: rgba(43, 60, 74, 0.7);
+    --glass-border: rgba(216, 222, 233, 0.1);
+    --accent: #88c0d0;
+    --accent-glow: rgba(136, 192, 208, 0.4);
+    --text-primary: #eceff4;
+    --text-secondary: #d8dee9;
+    --success: #a3be8c;
+    --danger: #bf616a;
 }
 
 * {
@@ -21,8 +20,8 @@ body {
     font-family: 'Outfit', sans-serif;
     background-color: var(--bg-dark);
     background-image:
-        radial-gradient(circle at 10% 20%, rgba(99, 102, 241, 0.15) 0%, transparent 20%),
-        radial-gradient(circle at 90% 80%, rgba(16, 185, 129, 0.1) 0%, transparent 20%);
+        radial-gradient(circle at 10% 20%, rgba(136, 192, 208, 0.15) 0%, transparent 20%),
+        radial-gradient(circle at 90% 80%, rgba(163, 190, 140, 0.1) 0%, transparent 20%);
     color: var(--text-primary);
     height: 100vh;
     overflow: hidden;
@@ -243,6 +242,11 @@ input:focus {
     display: flex;
     align-items: center;
     gap: 1rem;
+    justify-content: center;
+}
+
+.actions button {
+    flex: 1;
 }
 
 .toggle {
@@ -337,7 +341,7 @@ input:checked+.slider::before {
     height: 100%;
     width: 0%;
     background: var(--accent);
-    background: linear-gradient(90deg, var(--accent), #818cf8);
+    background: linear-gradient(90deg, var(--accent), #8fbcbb);
     border-radius: 10px;
     box-shadow: 0 0 10px var(--accent-glow);
     transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
@@ -435,8 +439,8 @@ input:checked+.slider::before {
 
 /* New Answer Box */
 .answer-box {
-    background: rgba(16, 185, 129, 0.1);
-    border: 1px solid #10b981;
+    background: rgba(163, 190, 140, 0.1);
+    border: 1px solid var(--success);
     border-radius: 8px;
     padding: 1rem;
     margin-bottom: 1rem;

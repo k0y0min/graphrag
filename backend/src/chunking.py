@@ -37,15 +37,21 @@ class AncestryInjector:
             
             # If node is content, split into sentences (simple split for now) and add
             if node.metadata.get("type") == "content":
-                # Simple sentence splitting by '.'
-                # In prod, use nltk or spacy
-                raw_sentences = [s.strip() for s in node.text.split('.') if s.strip()]
+                import nltk
+                try:
+                    raw_sentences = nltk.sent_tokenize(node.text)
+                except LookupError:
+                    nltk.download('punkt', quiet=True)
+                    nltk.download('punkt_tab', quiet=True)
+                    raw_sentences = nltk.sent_tokenize(node.text)
+
                 for s in raw_sentences:
-                    sentences.append(EnrichedSentence(
-                        text=s + ".",
-                        context=current_context,
-                        original_id=node.id
-                    ))
+                    if s.strip():
+                        sentences.append(EnrichedSentence(
+                            text=s.strip(),
+                            context=current_context,
+                            original_id=node.id
+                        ))
         return sentences
 
 class PerplexityChunker:
@@ -53,12 +59,15 @@ class PerplexityChunker:
         self.llm = llm
         self.max_tokens = max_tokens
         self.ppl_threshold = ppl_threshold
+        
+        import tiktoken
+        self.tokenizer = tiktoken.get_encoding("cl100k_base")
 
 
 
     async def chunk_async(self, sentences: List[EnrichedSentence]):
         """
-        Async generator version of chunking for granular progress reporting.
+        Async generator version of chunking using a vectorized single-pass perplexity check.
         """
         chunks = []
         current_chunk_sentences = []
@@ -66,36 +75,57 @@ class PerplexityChunker:
         chunk_counter = 1
         total = len(sentences)
         
+        # 1. Pre-calculate ALL perplexities in one efficient GPU pass
+        sentence_texts = [s.text for s in sentences]
+        
+        yield {
+            "type": "progress",
+            "stage": "Causal Matrix Computation",
+            "current": 0,
+            "total": total,
+            "status": "Running vectorized forward pass for semantic boundaries..."
+        }
+        
+        if hasattr(self.llm, "get_sentence_perplexities_async"):
+            perplexities = await self.llm.get_sentence_perplexities_async(sentence_texts)
+        elif hasattr(self.llm, "get_sentence_perplexities"):
+            # Run the heavy GPU math in a separate thread so we don't block the async loop
+            import asyncio
+            perplexities = await asyncio.to_thread(self.llm.get_sentence_perplexities, sentence_texts)
+        else:
+            perplexities = [0.0] * total
+
+        # 2. Iterate and split using our pre-calculated scores
         for i, sentence in enumerate(sentences):
-            # Estimate tokens
-            sent_tokens = len(sentence.text) // 4
+            sent_tokens = len(self.tokenizer.encode(sentence.text))
             
-            # Decision Logic
+            # Fetch the pre-calculated perplexity for this specific sentence
+            ppl = perplexities[i] if i < len(perplexities) else 0.0
+
+            # Decision Logic A: Hard Token Limit
             if current_chunk_sentences and (current_token_count + sent_tokens > self.max_tokens):
                 chunks.append(self._create_chunk(current_chunk_sentences, chunk_counter))
                 chunk_counter += 1
                 current_chunk_sentences = []
                 current_token_count = 0
             
-            if current_chunk_sentences:
-                # Perplexity check for semantic boundary detection
-                ppl = self._calculate_perplexity(current_chunk_sentences, sentence)
-                if ppl > self.ppl_threshold:
-                     chunks.append(self._create_chunk(current_chunk_sentences, chunk_counter))
-                     chunk_counter += 1
-                     current_chunk_sentences = []
-                     current_token_count = 0
+            # Decision Logic B: Semantic Boundary Detected!
+            elif current_chunk_sentences and ppl > self.ppl_threshold:
+                chunks.append(self._create_chunk(current_chunk_sentences, chunk_counter))
+                chunk_counter += 1
+                current_chunk_sentences = []
+                current_token_count = 0
             
             current_chunk_sentences.append(sentence)
             current_token_count += sent_tokens
             
-            # Yield progress every sentence or every N sentences
+            # Yield progress 
             yield {
                 "type": "progress",
                 "stage": "Chunking",
                 "current": i + 1,
                 "total": total,
-                "status": f"Creating chunks:{i+1}/{total}"
+                "status": f"Evaluating sentence context: {i+1}/{total} (PPL: {ppl:.2f})"
             }
             
         if current_chunk_sentences:

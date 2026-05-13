@@ -2,9 +2,29 @@ from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, field
 import json
 import asyncio
+import logging
 from src.llm_service import LLMBackend
 from src.chunking import FinalChunk
+
+logger = logging.getLogger(__name__)
 from src.ingestion import DocumentNode
+from pydantic import BaseModel, Field
+
+# Define the exact structure we want the LLM to output
+class ExtractedEntity(BaseModel):
+    id: str = Field(description="The canonical NAME of the entity (e.g. 'Apple', 'Elon Musk', 'User')")
+    type: str = Field(description="The category of the entity (e.g., 'Person', 'Organization')")
+    description: str = Field(description="Brief summary of what this entity is in this context")
+
+class ExtractedRelation(BaseModel):
+    source: str = Field(description="The ID of the source entity")
+    target: str = Field(description="The ID of the target entity")
+    type: str = Field(description="The type of relationship (e.g., 'FOUNDED', 'WORKS_FOR')")
+    description: str = Field(description="Brief explanation of their connection")
+
+class GraphExtractionSchema(BaseModel):
+    entities: List[ExtractedEntity]
+    relations: List[ExtractedRelation]
 
 @dataclass
 class Entity:
@@ -13,6 +33,7 @@ class Entity:
     description: str = ""
     source_chunk_ids: List[str] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
+    embedding: List[float] = field(default_factory=list)
 
 @dataclass
 class Relation:
@@ -34,16 +55,24 @@ class GraphExtractor:
         entities: Dict[str, Entity] = {}
         relations: List[Relation] = []
 
-        # 1. Semantic Extraction (Parallel)
+        # 1. Semantic Extraction (Parallel with Semaphore)
         total = len(chunks)
         completed = 0
+        results = [None] * total
+        
+        # Limit concurrent vLLM requests to avoid overwhelming the server
+        semaphore = asyncio.Semaphore(5)
 
+        async def _run_extraction(idx, chunk):
+            async with semaphore:
+                results[idx] = await self._extract_from_chunk_async(chunk)
+            return idx
 
         # Start all tasks
-        futures = [asyncio.ensure_future(self._extract_from_chunk_async(chunk)) for chunk in chunks]
+        tasks = [asyncio.ensure_future(_run_extraction(i, c)) for i, c in enumerate(chunks)]
         
         # Monitor completion
-        for future in asyncio.as_completed(futures):
+        for future in asyncio.as_completed(tasks):
             await future
             completed += 1
             yield {
@@ -53,9 +82,6 @@ class GraphExtractor:
                 "total": total,
                 "status": f"Extracting entities: {completed}/{total} chunks"
             }
-
-        # Gather results (already finished)
-        results = await asyncio.gather(*futures)
 
         # Merge results
         for chunk, extracted in zip(chunks, results):
@@ -100,35 +126,34 @@ class GraphExtractor:
     async def _extract_from_chunk_async(self, chunk: FinalChunk) -> Dict[str, Any]:
         # Pass 1: Initial Extraction
         prompt1 = (
-            f"Extract entities and relationships from the following text.\n"
             f"Context: {chunk.context}\n"
             f"Text: {chunk.text}\n\n"
             f"Rules:\n"
-            f"1. For any self-references (I, me, my, mine, Narrator, Author, 'the user'), use the canonical entity ID 'User' unless the speaker's actual name is explicitly provided and clear.\n"
-            f"2. Identical real-world entities MUST have the same ID (e.g., 'Apple' for the company).\n"
-            f"3. Return a JSON object with 'entities' (list of {{id, type, description}}) "
-            f"and 'relations' (list of {{source, target, type, description}}).\n"
-            f"IMPORTANT: The 'id' field should be the NAME of the entity (e.g. 'Apple', 'Elon Musk', 'User'). "
+            f"1. For any self-references (I, me, my), use the canonical entity ID 'User' unless the speaker's actual name is explicitly provided.\n"
+            f"2. Identical real-world entities MUST have the exact same ID.\n"
+            f"Extract all entities and relationships."
         )
         
         try:
-            res1 = await self.llm.generate_async(prompt1)
-            parsed1 = self._parse_llm_json(res1)
+            # We pass our Pydantic schema to your LLM backend
+            # Note: Your vLLM backend wrapper will need to pass this into `guided_json` or `response_format`
+            res1_text = await self.llm.generate_async(prompt1, schema=GraphExtractionSchema)
+            
+            # NO MORE STRING STRIPPING. We know this is valid JSON.
+            parsed1 = json.loads(res1_text) if isinstance(res1_text, str) else res1_text
             
             # Pass 2: The "Glance Back" Refinement
-            # We provide the LLM with what it already found and ask what it missed.
             prompt2 = (
-                f"Review the following text and the entities/relationships already extracted from it.\n"
                 f"Text: {chunk.text}\n\n"
                 f"Already Extracted: {json.dumps(parsed1, indent=2)}\n\n"
-                f"QUESTION: Are there any specialized relationships, secondary entities, or deep connections in the text that were missed or could be refined?\n"
-                f"Return a JSON object with any EXTRA 'entities' and 'relations' found. If nothing missed, return empty lists."
+                f"Are there any specialized relationships, secondary entities, or deep connections in the text that were missed?\n"
+                f"Extract any EXTRA entities and relations. If nothing was missed, return empty lists."
             )
             
-            res2 = await self.llm.generate_async(prompt2)
-            parsed2 = self._parse_llm_json(res2)
+            res2_text = await self.llm.generate_async(prompt2, schema=GraphExtractionSchema)
+            parsed2 = json.loads(res2_text) if isinstance(res2_text, str) else res2_text
             
-            # Combine
+            # Combine results
             combined = {
                 "entities": parsed1.get("entities", []) + parsed2.get("entities", []),
                 "relations": parsed1.get("relations", []) + parsed2.get("relations", [])
@@ -136,6 +161,9 @@ class GraphExtractor:
             return combined
             
         except Exception as e:
+            # The only exceptions caught here now will be actual network timeouts, 
+            # not JSON parsing errors.
+            print(f"Extraction failed for chunk {chunk.id}: {e}")
             return {"entities": [], "relations": []}
 
     def _parse_llm_json(self, response: Any) -> Dict[str, Any]:
@@ -145,8 +173,8 @@ class GraphExtractor:
             try:
                 clean = response.replace("```json", "").replace("```", "").strip()
                 return json.loads(clean)
-            except:
-                pass
+            except Exception as e:
+                logger.error(f"Failed to parse LLM JSON: {e}")
         return {"entities": [], "relations": []}
 
 

@@ -2,268 +2,242 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 import os
 import json
-import time
 import requests
-import torch
 import logging
 import asyncio
 
 try:
-    from transformers import AutoModelForCausalLM, AutoTokenizer, logging as transformers_logging
-    transformers_logging.set_verbosity_error()
+    from openai import OpenAI, AsyncOpenAI
 except ImportError:
-    pass
+    OpenAI, AsyncOpenAI = None, None
 
-
-try:
-    from aiolimiter import AsyncLimiter
-except ImportError:
-    AsyncLimiter = None
-
-
-# --- Logging Setup ---
 logger = logging.getLogger(__name__)
+
+
 
 class LLMBackend(ABC):
     @abstractmethod
-    def generate(self, prompt: str, schema: Optional[Any] = None) -> str | Dict[str, Any]:
+    def generate(self, prompt: str, schema: Optional[Any] = None, temperature: Optional[float] = None) -> str | Dict[str, Any]:
         pass
 
-    async def generate_async(self, prompt: str, schema: Optional[Any] = None) -> str | Dict[str, Any]:
-        """Default async implementation delegates to sync generation in a thread."""
-        return await asyncio.to_thread(self.generate, prompt, schema)
+    async def generate_async(self, prompt: str, schema: Optional[Any] = None, temperature: Optional[float] = None) -> str | Dict[str, Any]:
+        return await asyncio.to_thread(self.generate, prompt, schema, temperature)
 
     @abstractmethod
-    def embed(self, text: str) -> List[float]:
+    def get_sentence_perplexities(self, sentences: List[str]) -> List[float]:
         pass
-    
-    @abstractmethod
-    def get_perplexity(self, text: str) -> float:
-        return 0.0
 
-    @abstractmethod
-    def check_causal_link(self, context: str, sentence: str) -> float:
-        return 0.5
+    async def get_sentence_perplexities_async(self, sentences: List[str]) -> List[float]:
+        return await asyncio.to_thread(self.get_sentence_perplexities, sentences)
 
-# --- Implementations ---
-
-class GeminiBackend(LLMBackend):
-    def __init__(self, model_name: str = "gemini-3-flash-preview", api_key: Optional[str] = None):
-        import google.generativeai as genai
-        self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
-        if not self.api_key:
-            raise ValueError("GOOGLE_API_KEY not found")
-        genai.configure(api_key=self.api_key)
-        self.model = genai.GenerativeModel(model_name)
-        self.embedding_model = "models/gemini-embedding-001"
-        self.model_name = model_name
-        
-        # Rate Limiting setup
-        rpm_limit = int(os.getenv("GEMINI_RPM_LIMIT", "15"))
-        self.limiter = AsyncLimiter(rpm_limit, 60) if AsyncLimiter else None
-        
-    def generate(self, prompt: str, schema: Optional[Any] = None) -> str | Dict[str, Any]:
-        # Synchronous version (minimal fallback)
-        generation_config = {}
-        is_gemma = "gemma" in self.model_name.lower()
-        
-        if schema and not is_gemma:
-            generation_config["response_mime_type"] = "application/json"
-            if isinstance(schema, type) or hasattr(schema, "__annotations__"):
-                 generation_config["response_schema"] = schema
-
-        try:
-            response = self.model.generate_content(
-                prompt,
-                generation_config=generation_config
-            )
-            return self._parse_response(response, schema, is_gemma)
-        except Exception as e:
-            logger.error(f"Gemini generate error: {e}")
-            return ""
-
-    async def generate_async(self, prompt: str, schema: Optional[Any] = None) -> str | Dict[str, Any]:
-        # Async version with Rate Limiting
-        if self.limiter:
-            async with self.limiter:
-                return await self._generate_internal_async(prompt, schema)
-        return await self._generate_internal_async(prompt, schema)
-
-    async def _generate_internal_async(self, prompt: str, schema: Optional[Any] = None) -> str | Dict[str, Any]:
-        
-        generation_config = {}
-        is_gemma = "gemma" in self.model_name.lower()
-        
-        if schema and not is_gemma:
-            generation_config["response_mime_type"] = "application/json"
-            if isinstance(schema, type) or hasattr(schema, "__annotations__"):
-                 generation_config["response_schema"] = schema
-
-        try:
-            # Check if async method exists (it should in recent versions)
-            if hasattr(self.model, "generate_content_async"):
-                response = await self.model.generate_content_async(
-                    prompt,
-                    generation_config=generation_config
-                )
-                return self._parse_response(response, schema, is_gemma)
-            else:
-                # Fallback to thread pool if async generate is not available
-                return await asyncio.to_thread(self.generate, prompt, schema)
-        except Exception as e:
-            logger.error(f"Gemini async generate error: {e}")
-            return ""
-
-
-    def _parse_response(self, response, schema, is_gemma):
-        text = response.text
-        if schema and is_gemma:
-            # Manual JSON cleanup
-            text = text.replace("```json", "").replace("```", "").strip()
-            try:
-                return json.loads(text)
-            except json.JSONDecodeError:
-                logger.warning(f"Failed to parse JSON from {self.model_name}")
-                return {} 
-        elif schema:
-            return json.loads(text)
+class VLLMBackend(LLMBackend):
+    """
+    Backend for connecting to a local vLLM server.
+    Optimized for Gemma-4 / Qwen using guided_json structured outputs.
+    """
+    def __init__(self, model_name: str, base_url: str = "http://localhost:8000/v1", api_key: str = "dummy-key"):
+        if not OpenAI:
+            raise ImportError("Please install openai: pip install openai")
             
-        return text
-
-    def embed(self, text: str) -> List[float]:
-        import google.generativeai as genai
-        try:
-            result = genai.embed_content(
-                model=self.embedding_model,
-                content=text,
-                task_type="retrieval_document"
-            )
-            return result['embedding']
-        except Exception as e:
-            logger.error(f"Gemini embed error: {e}")
-            return []
-
-    async def embed_async(self, text: str) -> List[float]:
-        if self.limiter:
-            async with self.limiter:
-                return await asyncio.to_thread(self.embed, text)
-        return await asyncio.to_thread(self.embed, text)
-
-
-    def get_perplexity(self, text: str) -> float:
-        return 0.0
-
-    def check_causal_link(self, context: str, sentence: str) -> float:
-        return 0.5
-
-class LocalHuggingFaceBackend(LLMBackend):
-    def __init__(self, model_id: str = "gpt2", device: str = None, local_dir: str = "models"):
-        self.model_id = model_id
-        self.device = device or ("mps" if torch.backends.mps.is_available() else "cpu")
-        if torch.cuda.is_available(): self.device = "cuda"
-        
-        self.tokenizer = AutoTokenizer.from_pretrained(model_id, cache_dir=local_dir)
-        self.model = AutoModelForCausalLM.from_pretrained(model_id, cache_dir=local_dir).to(self.device)
-        self.model.eval()
-
-    def generate(self, prompt: str, schema: Optional[Any] = None) -> str | Dict[str, Any]:
-        return "" # Mostly used for PPL/Chunking in this setup
-
-    # generate_async uses default implementation which runs generate in a thread
-    # Since generate is empty/unused here, it's fine. 
-    # If we implement generation, PyTorch releases GIL, so threading is okay.
-
-    def embed(self, text: str) -> List[float]:
-        return []
-
-    def get_perplexity(self, text: str) -> float:
-        if not text: return 0.0
-        inputs = self.tokenizer(text, return_tensors="pt").to(self.device)
-        with torch.no_grad():
-            outputs = self.model(inputs["input_ids"], labels=inputs["input_ids"])
-        return torch.exp(outputs.loss).item()
-
-    def check_causal_link(self, context: str, sentence: str) -> float:
-        # Cross-Entropy Loss logic
-        full_text = f"{context} {sentence}"
-        inputs = self.tokenizer(full_text, return_tensors="pt").to(self.device)
-        input_ids = inputs["input_ids"]
-        
-        context_ids = self.tokenizer(context, return_tensors="pt")["input_ids"]
-        len_context = context_ids.shape[1]
-        
-        labels = input_ids.clone()
-        if len_context < labels.shape[1]:
-             labels[:, :len_context] = -100
-        else:
-             return 0.0
-             
-        with torch.no_grad():
-            outputs = self.model(input_ids, labels=labels)
-        
-        loss = outputs.loss.item()
-        similarity = torch.exp(torch.tensor(-loss)).item()
-        return similarity
-
-class OllamaBackend(LLMBackend):
-    def __init__(self, model_name: str, embedding_model_name: str = "nomic-embed-text", base_url: str = "http://localhost:11434"):
         self.model_name = model_name
-        self.embedding_model_name = embedding_model_name
-        self.base_url = base_url
+        self.client = OpenAI(base_url=base_url, api_key=api_key)
+        self.async_client = AsyncOpenAI(base_url=base_url, api_key=api_key)
 
-    def generate(self, prompt: str, schema: Optional[Any] = None) -> str | Dict[str, Any]:
+    async def get_sentence_perplexities_async(self, sentences: List[str]) -> List[float]:
+        """
+        Calculates real perplexity using vLLM's logprobs API.
+        """
+        if not sentences: return []
+        
+        full_text = " ".join(sentences)
+        
         try:
-            url = f"{self.base_url}/api/generate"
-            payload = {
-                "model": self.model_name,
-                "prompt": prompt,
-                "stream": False
-            }
-            if schema:
-                payload["format"] = "json"
-
-            response = requests.post(url, json=payload)
-            response.raise_for_status()
-            data = response.json()
-            text = data.get("response", "")
-
-            if schema and isinstance(text, str):
-                try:
-                    return json.loads(text)
-                except json.JSONDecodeError:
-                    logger.warning(f"Failed to parse JSON from {self.model_name}")
-                    return {}
-            return text
+            response = await self.async_client.completions.create(
+                model=self.model_name,
+                prompt=full_text,
+                max_tokens=0,
+                echo=True,
+                logprobs=1
+            )
+            
+            token_logprobs = response.choices[0].logprobs.token_logprobs
+            token_logprobs = [lp if lp is not None else 0.0 for lp in token_logprobs]
+            text_offsets = response.choices[0].logprobs.text_offset
+            
+            sentence_ppls = []
+            current_token_idx = 0
+            text_offset = 0
+            
+            for sent in sentences:
+                sent_logprobs = []
+                start_off = full_text.find(sent, text_offset)
+                
+                if start_off == -1: 
+                    sentence_ppls.append(0.0)
+                    continue
+                    
+                end_off = start_off + len(sent)
+                text_offset = end_off
+                
+                for i, offset in enumerate(text_offsets[current_token_idx:], start=current_token_idx):
+                    if offset >= end_off:
+                        break
+                    if offset >= start_off:
+                        sent_logprobs.append(token_logprobs[i])
+                        current_token_idx = i + 1
+                
+                if sent_logprobs:
+                    avg_logprob = sum(sent_logprobs) / len(sent_logprobs)
+                    import math
+                    ppl = math.exp(-avg_logprob)
+                    sentence_ppls.append(ppl)
+                else:
+                    sentence_ppls.append(0.0)
+                    
+            return sentence_ppls
         except Exception as e:
-            logger.error(f"Ollama generate error: {e}")
+            logger.error(f"Failed to get perplexities from vLLM: {e}")
+            return [0.0] * len(sentences)
+
+    def get_sentence_perplexities(self, sentences: List[str]) -> List[float]:
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # We shouldn't hit this if using async properly
+                return [0.0] * len(sentences)
+            return loop.run_until_complete(self.get_sentence_perplexities_async(sentences))
+        except RuntimeError:
+            return [0.0] * len(sentences)
+
+    def generate(self, prompt: str, schema: Optional[Any] = None, temperature: Optional[float] = None) -> str | Dict[str, Any]:
+        kwargs = {}
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+            
+        if schema and hasattr(schema, "model_json_schema"):
+            kwargs["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": schema.__name__,
+                    "schema": schema.model_json_schema()
+                }
+            }
+            
+        response = self.client.chat.completions.create(
+            model=self.model_name,
+            messages=[{"role": "user", "content": prompt}],
+            **kwargs
+        )
+        
+        content = response.choices[0].message.content
+        if schema:
+            try:
+                clean_content = content.replace("```json", "").replace("```", "").strip()
+                return json.loads(clean_content)
+            except json.JSONDecodeError:
+                logger.error("vLLM failed to return valid JSON despite response_format.")
+        return content
+
+    async def generate_async(self, prompt: str, schema: Optional[Any] = None, temperature: Optional[float] = None) -> str | Dict[str, Any]:
+        kwargs = {}
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+            
+        if schema and hasattr(schema, "model_json_schema"):
+            kwargs["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": schema.__name__,
+                    "schema": schema.model_json_schema()
+                }
+            }
+            
+        try:
+            response = await self.async_client.chat.completions.create(
+                model=self.model_name,
+                messages=[{"role": "user", "content": prompt}],
+                **kwargs
+            )
+            
+            content = response.choices[0].message.content
+            if schema:
+                try:
+                    clean_content = content.replace("```json", "").replace("```", "").strip()
+                    return json.loads(clean_content)
+                except json.JSONDecodeError:
+                    logger.error("vLLM failed to return valid JSON despite response_format.")
+            return content
+        except Exception as e:
+            logger.error(f"vLLM generate_async failed: {e}")
+            if schema:
+                return {}
             return ""
 
-    # generate_async uses default (threads) because requests is blocking.
-    # We could implement aiohttp here if we wanted to add that dependency.
+class LiteLLMBackend(LLMBackend):
+    """
+    Backend for connecting to external APIs via LiteLLM (e.g. Gemini).
+    """
+    def __init__(self, model_name: str):
+        self.model_name = model_name
 
-    def embed(self, text: str) -> List[float]:
+    def generate(self, prompt: str, schema: Optional[Any] = None, temperature: Optional[float] = None) -> str | Dict[str, Any]:
+        import litellm
+        kwargs = {}
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+            
+        if schema and hasattr(schema, "model_json_schema"):
+            kwargs["response_format"] = schema
+            
         try:
-            url = f"{self.base_url}/api/embeddings"
-            payload = {
-                "model": self.embedding_model_name,
-                "prompt": text
-            }
-            response = requests.post(url, json=payload)
-            response.raise_for_status()
-            data = response.json()
-            return data.get("embedding", [])
+            response = litellm.completion(
+                model=self.model_name,
+                messages=[{"role": "user", "content": prompt}],
+                **kwargs
+            )
+            content = response.choices[0].message.content
+            if schema:
+                try:
+                    clean_content = content.replace("```json", "").replace("```", "").strip()
+                    return json.loads(clean_content)
+                except json.JSONDecodeError:
+                    logger.error("LiteLLM failed to return valid JSON.")
+            return content
         except Exception as e:
-            logger.error(f"Ollama embed error: {e}")
-            return []
-        
-    def get_perplexity(self, text: str) -> float:
-        return 0.0
+            logger.error(f"LiteLLM generate failed: {e}")
+            if schema: return {}
+            return ""
 
-    def check_causal_link(self, context: str, sentence: str) -> float:
-        # Placeholder for Ollama-based causal link check
-        return 0.5
+    async def generate_async(self, prompt: str, schema: Optional[Any] = None, temperature: Optional[float] = None) -> str | Dict[str, Any]:
+        import litellm
+        kwargs = {}
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+            
+        if schema and hasattr(schema, "model_json_schema"):
+            kwargs["response_format"] = schema
+            
+        try:
+            response = await litellm.acompletion(
+                model=self.model_name,
+                messages=[{"role": "user", "content": prompt}],
+                **kwargs
+            )
+            content = response.choices[0].message.content
+            if schema:
+                try:
+                    clean_content = content.replace("```json", "").replace("```", "").strip()
+                    return json.loads(clean_content)
+                except json.JSONDecodeError:
+                    logger.error("LiteLLM failed to return valid JSON.")
+            return content
+        except Exception as e:
+            logger.error(f"LiteLLM generate_async failed: {e}")
+            if schema: return {}
+            return ""
 
-# --- Service Manager ---
+    def get_sentence_perplexities(self, sentences: List[str]) -> List[float]:
+        return [0.0] * len(sentences)
 
 class LLMService:
     def __init__(self, chunking_model: LLMBackend, extraction_model: LLMBackend):
@@ -277,4 +251,3 @@ class LLMService:
     @property
     def extractor(self) -> LLMBackend:
         return self.extraction_model
-

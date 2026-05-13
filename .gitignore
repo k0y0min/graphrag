@@ -6,8 +6,7 @@ __pycache__/
 
 # Project Specific
 .env
-demo_db/
-demo_db.wal
+db/
 logs/
 models/
 

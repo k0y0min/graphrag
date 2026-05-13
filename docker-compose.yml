@@ -12,24 +12,39 @@ services:
     volumes:
       - ./backend/db:/app/db
       - ./backend/logs:/app/logs
-      #- ./backend/models:/app/models
+      - ./frontend:/app/frontend
     env_file:
       - ./backend/.env
     environment:
       - PORT=8080
       - DB_PATH=db/demo_db
-      - CLEAR_DB_ON_STARTUP=true
+      - CLEAR_DB_ON_STARTUP=false
       - GEMINI_RPM_LIMIT=1000
+      - VLLM_BASE_URL=http://vllm-service:8000/v1
+      - VLLM_MODEL_NAME=unsloth/gemma-3-12b-it-FP8-Dynamic
+      - CHUNKING_PPL_THRESHOLD=100.0
+      - CHUNKING_MAX_TOKENS=100
+      - FRONTEND_PATH=/app/frontend/static
+    depends_on:
+      - vllm-service
     restart: always
 
-  frontend:
+  vllm-service:
     build:
-      context: ./frontend
+      context: ./vllm
       dockerfile: Dockerfile
-    environment:
-      - BACKEND_URL=http://localhost:8080
+      args:
+        HF_TOKEN: ${HF_TOKEN}
     ports:
-      - "80:80"
-    depends_on:
-      - backend
-    restart: always
+      - "8000:8000"
+    environment:
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN}
+    command: --model unsloth/gemma-3-12b-it-FP8-Dynamic --port 8000 --host 0.0.0.0 --trust-remote-code --max-model-len 4096
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped

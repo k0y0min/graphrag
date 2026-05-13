@@ -11,8 +11,8 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
 
-    <!-- Vis.js for Graph -->
-    <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <!-- Vis.js for Graph (Pinned) -->
+    <script type="text/javascript" src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
 
     <!-- Custom CSS -->
     <link rel="stylesheet" href="static/css/style.css?v=3">
@@ -52,8 +52,8 @@
         }
     </style>
 
-    <!-- Icons -->
-    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Icons (Pinned) -->
+    <script src="https://unpkg.com/lucide@0.400.0"></script>
 </head>
 
 <body>
@@ -63,6 +63,38 @@
                 style="width: 48px; height: 48px; color: #6366f1; margin-bottom: 20px;"></i>
             <h2 style="font-size: 1.75rem; margin-bottom: 10px;">Waking up GraphRAG</h2>
             <p style="color: #94a3b8;">The backend is initializing LLM models. This might take a minute...</p>
+        </div>
+    </div>
+
+    <!-- Auth Overlay -->
+    <div id="auth-overlay" class="loading-overlay hidden">
+        <div class="auth-modal glass-panel" style="padding: 2rem; width: 350px; text-align: center;">
+            <div class="brand" style="justify-content: center; margin-bottom: 1.5rem;">
+                <i data-lucide="network"></i>
+                <h1>GraphRAG</h1>
+            </div>
+
+            <div class="tabs" style="margin-bottom: 1.5rem;">
+                <button class="tab-btn active" id="auth-tab-login">Login</button>
+                <button class="tab-btn" id="auth-tab-register">Register</button>
+            </div>
+
+            <div id="auth-form" style="display: flex; flex-direction: column; gap: 1rem;">
+                <div class="search-box">
+                    <i data-lucide="user"></i>
+                    <input type="text" id="auth-username" placeholder="Username" autocomplete="username">
+                </div>
+                <div class="search-box">
+                    <i data-lucide="key"></i>
+                    <input type="password" id="auth-password" placeholder="Password" autocomplete="current-password">
+                </div>
+
+                <div id="auth-error" class="status-msg error" style="margin-top:0;"></div>
+
+                <button id="auth-submit-btn" class="primary-btn" style="margin-top: 0.5rem;">
+                    Sign In
+                </button>
+            </div>
         </div>
     </div>
 
@@ -76,6 +108,10 @@
                     title="View Source on GitHub">
                     <i data-lucide="github"></i>
                 </a>
+                <button id="logout-btn" class="icon-btn" style="margin-left: 0.5rem; color: var(--danger);"
+                    title="Logout">
+                    <i data-lucide="log-out"></i>
+                </button>
             </div>
 
             <div class="tabs">
@@ -189,6 +225,42 @@
     <script>
         lucide.createIcons();
     </script>
+</body>
+
+</html> <input type="checkbox" id="relation-labels-toggle" checked>
+<span class="slider"></span>
+</label>
+</div>
+<div class="control-group toggle-item">
+    <span>Hierarchical Layout</span>
+    <label class="toggle mini-toggle">
+        <input type="checkbox" id="hierarchical-toggle">
+        <span class="slider"></span>
+    </label>
+</div>
+</div>
+
+
+
+</aside>
+
+<!-- Main: Graph Visualization -->
+<main class="main-content">
+    <div id="network-container" class="glass-panel"></div>
+    <div class="overlay-controls">
+        <button class="icon-btn" id="fit-btn" title="Fit Graph"><i data-lucide="maximize"></i></button>
+    </div>
+
+</main>
+</div>
+
+
+<!-- Dynamic Config -->
+<script src="config.js"></script>
+<script src="static/js/app.js?v=4"></script>
+<script>
+    lucide.createIcons();
+</script>
 </body>
 
 </html>

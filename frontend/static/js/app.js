@@ -1,6 +1,10 @@
 // Backend configuration
-const BACKEND_URL = window.BACKEND_URL || (window.location.hostname === 'localhost' ? 'http://localhost:8000' : '');
+const BACKEND_URL = window.BACKEND_URL || '/api';
 const POLL_INTERVAL = 2000; // 2 seconds
+
+// Auth globals
+let authToken = localStorage.getItem('graphrag_token');
+let authMode = 'login'; // 'login' or 'register'
 
 // Graph globals
 let network = null;
@@ -16,46 +20,202 @@ const clearDbBtn = document.getElementById('clear-db-btn');
 const ingestStatus = document.getElementById('ingest-status');
 const progressContainer = document.getElementById('progress-container');
 
-
 const queryBtn = document.getElementById('query-btn');
 const queryInput = document.getElementById('query-input');
 const queryResults = document.getElementById('query-results');
 
-
 const tabBtns = document.querySelectorAll('.tab-btn');
 const tabContents = document.querySelectorAll('.tab-content');
 
+// Auth DOM
+const authOverlay = document.getElementById('auth-overlay');
+const authTabLogin = document.getElementById('auth-tab-login');
+const authTabRegister = document.getElementById('auth-tab-register');
+const authSubmitBtn = document.getElementById('auth-submit-btn');
+const authUsername = document.getElementById('auth-username');
+const authPassword = document.getElementById('auth-password');
+const authError = document.getElementById('auth-error');
+
+// API Wrapper
+async function fetchApi(endpoint, options = {}) {
+    const headers = {
+        'Content-Type': 'application/json',
+        ...options.headers
+    };
+    if (authToken) {
+        headers['Authorization'] = `Bearer ${authToken}`;
+    }
+    
+    const response = await fetch(`${BACKEND_URL}${endpoint}`, {
+        ...options,
+        headers
+    });
+    
+    if (response.status === 401 && endpoint !== '/auth/login') {
+        logout();
+        throw new Error("Unauthorized. Please log in.");
+    }
+    return response;
+}
+
+function logout() {
+    authToken = null;
+    localStorage.removeItem('graphrag_token');
+    authOverlay.classList.remove('hidden');
+    if (network) {
+        nodesDS.clear();
+        edgesDS.clear();
+    }
+}
+
 // Init
 document.addEventListener('DOMContentLoaded', () => {
+    setupAuthListeners();
     checkBackendReady();
 });
 
-async function checkBackendReady() {
-    const overlay = document.getElementById('loading-overlay');
+// Auth Setup
+function setupAuthListeners() {
+    authTabLogin.addEventListener('click', () => {
+        authMode = 'login';
+        authTabLogin.classList.add('active');
+        authTabRegister.classList.remove('active');
+        authSubmitBtn.innerText = 'Sign In';
+        authError.innerText = '';
+    });
+    
+    authTabRegister.addEventListener('click', () => {
+        authMode = 'register';
+        authTabRegister.classList.add('active');
+        authTabLogin.classList.remove('active');
+        authSubmitBtn.innerText = 'Create Account';
+        authError.innerText = '';
+    });
+    
+    authSubmitBtn.addEventListener('click', async () => {
+        const username = authUsername.value.trim();
+        const password = authPassword.value;
+        if (!username || !password) {
+            authError.innerText = "Username and password required.";
+            return;
+        }
+        
+        authSubmitBtn.disabled = true;
+        authSubmitBtn.innerText = 'Processing...';
+        
+        try {
+            if (authMode === 'register') {
+                const res = await fetch(`${BACKEND_URL}/auth/register`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || 'Registration failed');
+                
+                // Auto-login after register
+                authTabLogin.click();
+                authSubmitBtn.innerText = 'Registration successful! Click Sign In.';
+            } else {
+                const res = await fetch(`${BACKEND_URL}/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || 'Login failed');
+                
+                authToken = data.access_token;
+                localStorage.setItem('graphrag_token', authToken);
+                
+                authOverlay.classList.add('hidden');
+                initGraph();
+            }
+        } catch (e) {
+            authError.innerText = e.message;
+        } finally {
+            authSubmitBtn.disabled = false;
+            if (authMode === 'login') authSubmitBtn.innerText = 'Sign In';
+            if (authMode === 'register') authSubmitBtn.innerText = 'Create Account';
+        }
+    });
 
+    const logoutBtn = document.getElementById('logout-btn');
+    if (logoutBtn) {
+        logoutBtn.addEventListener('click', () => {
+            logout();
+        });
+    }
+}
+
+function showEphemeralToast(message, duration = 5000) {
+    let toast = document.getElementById('ephemeral-toast');
+    if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'ephemeral-toast';
+        toast.style.cssText = "position: fixed; bottom: 20px; right: 20px; background: #1e293b; color: white; padding: 12px 24px; border-radius: 8px; z-index: 100000; font-family: 'Outfit', sans-serif; font-size: 0.95rem; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1); transition: opacity 0.5s ease; max-width: 350px; border-left: 4px solid #fbbf24;";
+        document.body.appendChild(toast);
+    }
+    toast.innerText = message;
+    toast.style.opacity = '1';
+    toast.style.display = 'block';
+    
+    setTimeout(() => {
+        toast.style.opacity = '0';
+        setTimeout(() => { toast.style.display = 'none'; }, 500);
+    }, duration);
+}
+
+async function checkBackendReady() {
+    const loadingOverlay = document.getElementById('loading-overlay');
+    
+    // Hide loading overlay immediately to let user interact
+    if (loadingOverlay) loadingOverlay.classList.add('hidden');
+    
+    if (authToken) {
+        initGraph();
+    } else {
+        authOverlay.classList.remove('hidden');
+    }
+
+    // Start background polling
+    pollBackendStatus();
+}
+
+async function pollBackendStatus() {
+    let shownWarmingUpMessage = false;
+    
     while (true) {
         try {
             const res = await fetch(`${BACKEND_URL}/health`);
             if (res.ok) {
                 const data = await res.json();
                 if (data.status === 'healthy') {
-                    console.log("Backend is healthy!");
-                    overlay.classList.add('hidden');
-                    initGraph();
-                    break;
+                    console.log("Backend is fully healthy!");
+                    break; // Stop polling
+                } else if (data.status === 'warming_up') {
+                    if (!shownWarmingUpMessage) {
+                        showEphemeralToast("vLLM is warming up (takes ~5 mins). Perplexity chunking is inactive; falling back to fixed-size chunking for now.", 6000);
+                        shownWarmingUpMessage = true;
+                    }
                 }
             }
         } catch (e) {
             console.log("Waiting for backend...");
         }
-        await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL));
+        await new Promise(resolve => setTimeout(resolve, 5000));
     }
 }
 
 // Tabs
 tabBtns.forEach(btn => {
+    // Only process if it's not an auth tab
+    if (btn.id.startsWith('auth-tab')) return;
+    
     btn.addEventListener('click', () => {
-        tabBtns.forEach(b => b.classList.remove('active'));
+        tabBtns.forEach(b => {
+            if (!b.id.startsWith('auth-tab')) b.classList.remove('active');
+        });
         tabContents.forEach(c => c.classList.add('hidden'));
 
         btn.classList.add('active');
@@ -66,6 +226,7 @@ tabBtns.forEach(btn => {
 
 // Graph Initialization
 function initGraph() {
+    if (network) return; // Already initialized
     const container = document.getElementById('network-container');
 
     // Sync initial values from DOM
@@ -79,20 +240,10 @@ function initGraph() {
     nodesDS = new vis.DataSet([]);
     edgesDS = new vis.DataSet([]);
 
-    // DataView (no longer filtering structure nodes)
-    nodesView = new vis.DataView(nodesDS, {
-        filter: (node) => true
-    });
+    nodesView = new vis.DataView(nodesDS, { filter: (node) => true });
+    edgesView = new vis.DataView(edgesDS, { filter: (edge) => true });
 
-    edgesView = new vis.DataView(edgesDS, {
-        filter: (edge) => true
-    });
-
-
-    const data = {
-        nodes: nodesView,
-        edges: edgesView
-    };
+    const data = { nodes: nodesView, edges: edgesView };
 
     const options = {
         nodes: {
@@ -145,23 +296,20 @@ function initGraph() {
                 shakeTowards: 'leaves'
             }
         },
-        interaction: {
-            hover: true,
-            tooltipDelay: 200
-        }
+        interaction: { hover: true, tooltipDelay: 200 }
     };
 
     network = new vis.Network(container, data, options);
-
-    // Load initial data
     loadInitialData();
 }
 
 async function loadInitialData() {
     try {
-        const res = await fetch(`${BACKEND_URL}/graph`);
+        const res = await fetchApi(`/graph`);
         const data = await res.json();
         if (data.status === 'success' && data.results) {
+            nodesDS.clear();
+            edgesDS.clear();
             updateGraph(data.results);
         }
     } catch (e) {
@@ -171,7 +319,7 @@ async function loadInitialData() {
 
 // Clear DB
 clearDbBtn.addEventListener('click', async () => {
-    if (!confirm('Are you sure you want to clear the entire database? This cannot be undone.')) {
+    if (!confirm('Are you sure you want to clear your graph database? This cannot be undone.')) {
         return;
     }
 
@@ -180,7 +328,7 @@ clearDbBtn.addEventListener('click', async () => {
     lucide.createIcons();
 
     try {
-        const res = await fetch(`${BACKEND_URL}/clear_db`, { method: 'POST' });
+        const res = await fetchApi(`/clear_db`, { method: 'POST' });
         const data = await res.json();
 
         if (data.status === 'success') {
@@ -192,7 +340,7 @@ clearDbBtn.addEventListener('click', async () => {
             throw new Error(data.detail || 'Failed to clear database');
         }
     } catch (e) {
-        ingestStatus.innerText = `Error clearing DB: ${e.message}`;
+        ingestStatus.innerText = `Error: ${e.message}`;
         ingestStatus.className = 'status-msg error';
     } finally {
         clearDbBtn.disabled = false;
@@ -213,15 +361,10 @@ ingestBtn.addEventListener('click', async () => {
     ingestStatus.className = 'status-msg';
     progressContainer.classList.remove('hidden');
 
-
     try {
-        const response = await fetch(`${BACKEND_URL}/ingest`, {
+        const response = await fetchApi(`/ingest`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                text: text,
-                clear_db: false
-            })
+            body: JSON.stringify({ text: text, clear_db: false })
         });
 
         const reader = response.body.getReader();
@@ -233,41 +376,30 @@ ingestBtn.addEventListener('click', async () => {
             if (done) break;
 
             buffer += decoder.decode(value, { stream: true });
-
-            // Process SSE formatted data (data: {...}\n\n)
             let lines = buffer.split('\n');
-            buffer = lines.pop(); // Keep partial last line
+            buffer = lines.pop();
 
             for (const line of lines) {
                 if (line.startsWith('data: ')) {
                     const data = JSON.parse(line.substring(6));
 
                     if (data.type === 'progress') {
-                        // Switch from indeterminate to functional
                         const progressBar = progressContainer.querySelector('.progress-bar');
                         progressBar.classList.remove('indeterminate');
 
-                        // Calculate percentage for this stage
                         const stagePercent = data.total > 0 ? (data.current / data.total) * 100 : data.progress;
                         progressBar.style.width = `${stagePercent}%`;
 
-                        // Show percentage-based progress
                         let statusText = data.status || 'Processing...';
                         if (data.stage) {
                             const percent = Math.round(data.total > 0 ? (data.current / data.total) * 100 : data.progress);
                             statusText = `${data.stage}: ${percent}%`;
                         }
-
-
-
                         ingestStatus.innerText = statusText;
                     } else if (data.type === 'result') {
-                        ingestStatus.innerText = `Success! Processed ${data.results.nodes_processed} document chunks, extracted ${data.results.entities_extracted} entities.`;
+                        ingestStatus.innerText = `Success! Processed ${data.results.nodes_processed} chunks, extracted ${data.results.entities_extracted} entities.`;
                         ingestStatus.classList.add('success');
-
-                        // Refresh whole graph to get new coloring/merges
                         loadInitialData();
-
                         ingestText.value = '';
                     } else if (data.type === 'error') {
                         throw new Error(data.detail || 'Unknown error');
@@ -282,19 +414,14 @@ ingestBtn.addEventListener('click', async () => {
         ingestBtn.disabled = false;
         ingestBtn.innerHTML = '<i data-lucide="upload-cloud"></i> Ingest';
 
-        // Keep status visible, hide bar after a delay 
         setTimeout(() => {
             progressContainer.classList.add('hidden');
             const progressBar = progressContainer.querySelector('.progress-bar');
             progressBar.classList.remove('indeterminate');
             progressBar.style.width = '0%';
         }, 1000);
-
-
         lucide.createIcons();
     }
-
-
 });
 
 // Fit Button
@@ -303,92 +430,48 @@ document.getElementById('fit-btn').addEventListener('click', () => {
 });
 
 // Settings Controls
-const springLengthRange = document.getElementById('spring-length-range');
-const springLengthVal = document.getElementById('spring-length-val');
-const gravityRange = document.getElementById('gravity-range');
-const gravityVal = document.getElementById('gravity-val');
-const physicsToggle = document.getElementById('physics-toggle');
-const entityLabelsToggle = document.getElementById('entity-labels-toggle');
-const relationLabelsToggle = document.getElementById('relation-labels-toggle');
-
-springLengthRange.addEventListener('input', (e) => {
+document.getElementById('spring-length-range').addEventListener('input', (e) => {
     const val = parseInt(e.target.value);
-    springLengthVal.innerText = val;
+    document.getElementById('spring-length-val').innerText = val;
     network.setOptions({ physics: { barnesHut: { springLength: val } } });
 });
 
-gravityRange.addEventListener('input', (e) => {
+document.getElementById('gravity-range').addEventListener('input', (e) => {
     const val = parseInt(e.target.value);
-    gravityVal.innerText = val;
+    document.getElementById('gravity-val').innerText = val;
     network.setOptions({ physics: { barnesHut: { gravitationalConstant: val } } });
 });
 
-physicsToggle.addEventListener('change', (e) => {
+document.getElementById('physics-toggle').addEventListener('change', (e) => {
     network.setOptions({ physics: { enabled: e.target.checked } });
 });
 
-entityLabelsToggle.addEventListener('change', (e) => {
-    network.setOptions({
-        nodes: {
-            font: {
-                size: e.target.checked ? 14 : 0
-            }
-        }
-    });
+document.getElementById('entity-labels-toggle').addEventListener('change', (e) => {
+    network.setOptions({ nodes: { font: { size: e.target.checked ? 14 : 0 } } });
 });
 
-relationLabelsToggle.addEventListener('change', (e) => {
-    network.setOptions({
-        edges: {
-            font: {
-                size: e.target.checked ? 12 : 0
-            }
-        }
-    });
+document.getElementById('relation-labels-toggle').addEventListener('change', (e) => {
+    network.setOptions({ edges: { font: { size: e.target.checked ? 12 : 0 } } });
 });
 
-const hierarchicalToggle = document.getElementById('hierarchical-toggle');
-
-hierarchicalToggle.addEventListener('change', (e) => {
+document.getElementById('hierarchical-toggle').addEventListener('change', (e) => {
     const isHierarchical = e.target.checked;
     network.setOptions({
-        layout: {
-            hierarchical: {
-                enabled: isHierarchical,
-                direction: 'UD',
-                sortMethod: 'directed',
-                shakeTowards: 'leaves'
-            }
-        },
-        physics: {
-            enabled: !isHierarchical
-        }
+        layout: { hierarchical: { enabled: isHierarchical, direction: 'UD', sortMethod: 'directed' } },
+        physics: { enabled: !isHierarchical }
     });
-    if (isHierarchical) {
-        network.stabilize();
-    }
+    if (isHierarchical) network.stabilize();
 });
 
-const COMMUNITY_COLORS = [
-    '#ec4899', // Pink
-    '#f59e0b', // Amber
-    '#10b981', // Emerald
-    '#3b82f6', // Blue
-    '#8b5cf6', // Violet
-    '#ef4444', // Red
-    '#06b6d4', // Cyan
-    '#84cc16'  // Lime
-];
+const COMMUNITY_COLORS = ['#ec4899', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ef4444', '#06b6d4', '#84cc16'];
 
 function updateGraph(results) {
     const { entities, relations } = results;
 
-    // Add Entities
     entities.forEach(ent => {
         if (ent.type === 'QueryEntity') return;
 
-        // Coloring based on community
-        let nodeColor = '#6366f1'; // Default
+        let nodeColor = '#6366f1';
         if (ent.community_id !== undefined && ent.community_id !== null && ent.community_id !== -1) {
             nodeColor = COMMUNITY_COLORS[ent.community_id % COMMUNITY_COLORS.length];
         }
@@ -408,7 +491,6 @@ function updateGraph(results) {
         } catch (e) { }
     });
 
-    // Add Relations
     relations.forEach(rel => {
         const edgeId = `${rel.source_id}-${rel.type}-${rel.target_id}`;
         try {
@@ -436,15 +518,10 @@ queryBtn.addEventListener('click', async () => {
     queryResults.innerHTML = '';
 
     try {
-        const res = await fetch(`${BACKEND_URL}/query`, {
+        const res = await fetchApi(`/query`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                query: query,
-                query_type: 'local'
-            })
+            body: JSON.stringify({ query: query, query_type: 'local' })
         });
-
         const data = await res.json();
 
         if (data.status === 'success') {
@@ -453,7 +530,6 @@ queryBtn.addEventListener('click', async () => {
         } else {
             queryResults.innerHTML = `<div class="status-msg error">Error: ${data.detail}</div>`;
         }
-
     } catch (e) {
         queryResults.innerHTML = `<div class="status-msg error">Error: ${e.message}</div>`;
     } finally {
@@ -465,7 +541,6 @@ queryBtn.addEventListener('click', async () => {
 function renderAnswer(results) {
     queryResults.innerHTML = '';
 
-    // Show Answer
     if (results.answer) {
         const answerDiv = document.createElement('div');
         answerDiv.className = 'answer-box';
@@ -473,7 +548,6 @@ function renderAnswer(results) {
         queryResults.appendChild(answerDiv);
     }
 
-    // Show Context (optional, or just rely on graph)
     if (results.relations && results.relations.length > 0) {
         const contextHeader = document.createElement('div');
         contextHeader.className = 'subtitle';
@@ -494,7 +568,6 @@ function renderAnswer(results) {
         queryResults.innerHTML = '<div class="empty-state">No results found.</div>';
     }
 }
-
 
 // Add spinning animation style for loader
 const style = document.createElement('style');

@@ -56,12 +56,12 @@ class HierarchyDetector:
         # 1. Pre-scan for explicit headers
         header_map = {}
         current_context = []
-        for i, line in enumerate(line_map.get_lines(), 1):
+        for line in line_map.get_lines():
             if line.content.strip().startswith('#'):
                 current_context.append(line.content.strip())
                 if len(current_context) > 3:
                      current_context.pop(0)
-            header_map[i] = list(current_context)
+            header_map[line.id] = list(current_context)
 
         # 2. Prepare Tasks
         tasks = []
@@ -97,23 +97,23 @@ class HierarchyDetector:
         # 3. Run Parallel with Granular Yielding
         total = len(tasks)
         completed = 0
+        results = [None] * total
 
-        # We need to map futures to their line ranges
-        future_to_range = {}
+        async def _run_hierarchy(idx, coro, line_range):
+            results[idx] = await coro
+            return idx, line_range
+
+        # Create indexed tasks
+        indexed_tasks = []
         for i, task_coro in enumerate(tasks):
-            fut = asyncio.ensure_future(task_coro)
             batch = batch_infos[i]
             line_range = (batch[0].id, batch[-1].id)
-            future_to_range[fut] = line_range
+            indexed_tasks.append(asyncio.ensure_future(_run_hierarchy(i, task_coro, line_range)))
 
         # Monitor completion
-        for future in asyncio.as_completed(future_to_range.keys()):
-            result = await future
+        for future in asyncio.as_completed(indexed_tasks):
+            idx, (start, end) = await future
             completed += 1
-            
-            # Find which future just completed
-            # Note: future in as_completed is usually the original future if it's already a future
-            start, end = future_to_range.get(future, (0, 0))
             
             yield {
                 "type": "progress",
@@ -122,9 +122,6 @@ class HierarchyDetector:
                 "total": total,
                 "status": f"Analyzing hierarchy: Lines {start}-{end} ({completed}/{total} batches)"
             }
-        
-        # 4. Gather results (using the futures we already started)
-        results = await asyncio.gather(*future_to_range.keys())
 
         
         # 5. Process Results
@@ -247,16 +244,12 @@ class DocumentTreeBuilder:
         )
 
     def _create_header_node(self, line_id: int, content: str, doc_id: str) -> DocumentNode:
-        level = 1
-        for char in content:
-            if char == '#':
-                level += 1
-            else:
-                break
-        if not content.startswith('#'):
-             level = 2 
+        stripped = content.lstrip()
+        hashes = len(stripped) - len(stripped.lstrip('#'))
+        if hashes > 0:
+            level = hashes
         else:
-             level = content.count('#', 0, 10)
+            level = 2  # Non-markdown header fallback
 
         return DocumentNode(
             id=f"{doc_id}_header_{line_id}",

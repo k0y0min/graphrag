@@ -1,6 +1,5 @@
 import networkx as nx
 from typing import List, Dict, Tuple, Any
-from src.extraction import Entity, Relation
 from networkx.algorithms.community import greedy_modularity_communities
 import logging
 

@@ -55,16 +55,17 @@ class GraphStorage:
                 self.conn.execute(f"DROP TABLE {table}")
             except Exception as e:
                 # Table might not exist, which is fine during reset
-                pass
+                logger.debug(f"Table {table} did not exist to drop or failed: {e}")
         self._init_schema()
 
     def _init_schema(self):
         try:
-            self.conn.execute("CREATE NODE TABLE Entity(id STRING, name STRING, type STRING, description STRING, community_id INT64, PRIMARY KEY (id))")
+            self.conn.execute("CREATE NODE TABLE Entity(id STRING, name STRING, type STRING, description STRING, community_id INT64, embedding FLOAT[], PRIMARY KEY (id))")
         except RuntimeError as e:
             if "already exists" not in str(e).lower():
                 logger.error(f"Init Entity error: {e}")
-            pass
+            else:
+                logger.debug("Entity table already exists.")
 
         try:
             # Semantic relation
@@ -72,7 +73,8 @@ class GraphStorage:
         except RuntimeError as e:
             if "already exists" not in str(e).lower():
                 logger.error(f"Init Related error: {e}")
-            pass
+            else:
+                logger.debug("Related table already exists.")
 
         try:
             # Structural relation
@@ -80,7 +82,8 @@ class GraphStorage:
         except RuntimeError as e:
             if "already exists" not in str(e).lower():
                 logger.error(f"Init ParentOf error: {e}")
-            pass
+            else:
+                logger.debug("ParentOf table already exists.")
 
     def ingest(self, entities: List[Entity], relations: List[Relation]):
         # Use simple transaction-like behavior by executing in a loop
@@ -92,13 +95,14 @@ class GraphStorage:
             name = ent.metadata.get("name", ent.id)
             comm_id = ent.metadata.get("community_id", -1)
             
-            query = "MERGE (a:Entity {id: $p_id}) SET a.name = $p_name, a.type = $p_type, a.description = $p_desc, a.community_id = $p_comm_id"
+            query = "MERGE (a:Entity {id: $p_id}) SET a.name = $p_name, a.type = $p_type, a.description = $p_desc, a.community_id = $p_comm_id, a.embedding = $p_emb"
             self.conn.execute(query, {
                 "p_id": ent.id,
                 "p_name": name,
                 "p_type": ent.type,
                 "p_desc": ent.description,
-                "p_comm_id": comm_id
+                "p_comm_id": comm_id,
+                "p_emb": ent.embedding
             })
 
         # 2. Ingest Relations
@@ -108,7 +112,7 @@ class GraphStorage:
                 self.conn.execute(query, {"p_src": rel.source_id, "p_tgt": rel.target_id})
             else:
                 # Semantic "Related"
-                query = "MATCH (a:Entity {id: $p_src}), (b:Entity {id: $p_tgt}) MERGE (a)-[r:Related {rel_type: $p_type, description: $p_desc}]->(b)"
+                query = "MATCH (a:Entity {id: $p_src}), (b:Entity {id: $p_tgt}) MERGE (a)-[r:Related {rel_type: $p_type}]->(b) SET r.description = $p_desc"
                 self.conn.execute(query, {
                     "p_src": rel.source_id,
                     "p_tgt": rel.target_id,
@@ -129,36 +133,38 @@ class GraphStorage:
         return None
 
     def get_nodes_by_name(self, name: str) -> List[Dict[str, Any]]:
-        query = "MATCH (a:Entity) WHERE toLower(a.name) = toLower($p_name) RETURN a.id, a.name, a.type, a.description"
+        query = "MATCH (a:Entity) WHERE toLower(a.name) CONTAINS toLower($p_name) OR toLower($p_name) CONTAINS toLower(a.name) RETURN a.id, a.name, a.type, a.description, a.embedding"
         result = self.conn.execute(query, {"p_name": name})
         rows = []
         while result.has_next():
             row = result.get_next()
-            rows.append({"id": row[0], "name": row[1], "type": row[2], "description": row[3]})
+            rows.append({"id": row[0], "name": row[1], "type": row[2], "description": row[3], "embedding": row[4]})
         return rows
 
     def query_local(self, entity_id: str) -> List[Any]:
         # Outgoing (searching by name OR id)
-        query_out = "MATCH (a:Entity)-[r:Related]->(b:Entity) WHERE toLower(a.name) = toLower($p_id) OR a.id = $p_id RETURN b.id, b.type, b.description, r.rel_type, r.description, true, b.name"
+        query_out = "MATCH (a:Entity)-[r:Related]->(b:Entity) WHERE toLower(a.name) CONTAINS toLower($p_id) OR toLower($p_id) CONTAINS toLower(a.name) OR a.id = $p_id RETURN b.id, b.type, b.description, r.rel_type, r.description, true, b.name"
         
         # Incoming
-        query_in = "MATCH (b:Entity)-[r:Related]->(a:Entity) WHERE toLower(a.name) = toLower($p_id) OR a.id = $p_id RETURN b.id, b.type, b.description, r.rel_type, r.description, false, b.name"
+        query_in = "MATCH (b:Entity)-[r:Related]->(a:Entity) WHERE toLower(a.name) CONTAINS toLower($p_id) OR toLower($p_id) CONTAINS toLower(a.name) OR a.id = $p_id RETURN b.id, b.type, b.description, r.rel_type, r.description, false, b.name"
 
         results = []
         try:
            res_out = self.conn.execute(query_out, {"p_id": entity_id})
            results.extend(self._results_to_list(res_out))
-        except Exception: pass
+        except Exception as e:
+            logger.warning(f"Error querying outgoing edges for {entity_id}: {e}")
         
         try:
            res_in = self.conn.execute(query_in, {"p_id": entity_id})
            results.extend(self._results_to_list(res_in))
-        except Exception: pass
+        except Exception as e:
+            logger.warning(f"Error querying incoming edges for {entity_id}: {e}")
         
         return results
 
     def query_structural(self, entity_id: str) -> List[Any]:
-        query = "MATCH (p:Entity)-[:ParentOf*]->(a:Entity) WHERE toLower(a.name) = toLower($id) OR a.id = $id RETURN p.id, p.type, p.description, p.name"
+        query = "MATCH (p:Entity)-[:ParentOf*]->(a:Entity) WHERE toLower(a.name) CONTAINS toLower($id) OR toLower($id) CONTAINS toLower(a.name) OR a.id = $id RETURN p.id, p.type, p.description, p.name"
         result = self.conn.execute(query, {"id": entity_id})
         return self._results_to_list(result)
 
@@ -169,8 +175,7 @@ class GraphStorage:
             try:
                 self.conn.execute(query, {"id": eid, "cid": cid})
             except Exception as e:
-                # Log error instead of silent pass
-                pass 
+                logger.error(f"Failed to update community for node {eid}: {e}")
 
     def get_full_graph(self) -> Dict[str, List[Dict[str, Any]]]:
         try:
