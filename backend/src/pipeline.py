@@ -69,87 +69,106 @@ class GraphRAGPipeline:
 
 
 
+    def _cosine_similarity(self, v1: List[float], v2: List[float]) -> float:
+        if not v1 or not v2: return 0.0
+        dot_product = sum(a * b for a, b in zip(v1, v2))
+        magnitude_v1 = math.sqrt(sum(a * a for a in v1))
+        magnitude_v2 = math.sqrt(sum(b * b for b in v2))
+        if magnitude_v1 == 0 or magnitude_v2 == 0: return 0.0
+        return dot_product / (magnitude_v1 * magnitude_v2)
+
     async def resolve_entities_async(self, entities: List[Entity]) -> Dict[str, str]:
         """
         Resolves extracted entities to existing nodes OR new unique nodes.
+        Uses Exact Name grouping combined with an LLM Discriminator to gracefully handle homonyms.
         Returns a mapping of {extraction_id: assigned_unique_id}.
         """
-        id_map = {} # Extraction ID -> New/Existing UUID
+        id_map = {} # Original Extraction ID -> New/Existing UUID
         
-        # 1. Deduplicate by name first (LLM usually merges these within a run)
+        # 1. Deduplicate extracted entities by normalized name (uppercase)
+        # We assume if the extractor gave them the exact same ID string in one batch, they are the same concept.
         unique_extracted = {}
         for ent in entities:
-            if ent.id not in unique_extracted:
-                unique_extracted[ent.id] = ent
-        
-        # 2. Process each unique entity
-        for name, ent in unique_extracted.items():
-            # Get existing nodes with same name
-            existing = self.storage.get_nodes_by_name(name)
-            
-            assigned_id = None
-            if not existing:
-                # New entity name entirely
-                assigned_id = str(uuid.uuid4())
-                self.logger.info(f"Resolution: '{name}' is new. Assigned UUID {assigned_id}")
+            norm_name = ent.id.strip().upper()
+            if norm_name not in unique_extracted:
+                unique_extracted[norm_name] = {"original_ids": [ent.id], "entity": ent, "descriptions": [ent.description]}
             else:
-                if len(ent.description.strip()) < 30:
-                    assigned_id = existing[0]["id"]
-                    self.logger.info(f"Resolution: '{name}' merged by heuristic (short desc).")
-                    best_match = existing[0]
-                else:
-                    best_match = None
-                    import difflib
+                if ent.id not in unique_extracted[norm_name]["original_ids"]:
+                    unique_extracted[norm_name]["original_ids"].append(ent.id)
+                unique_extracted[norm_name]["descriptions"].append(ent.description)
+        
+        # 2. Process each unique normalized entity
+        for norm_name, data in unique_extracted.items():
+            ent = data["entity"]
+            original_ids = data["original_ids"]
+            
+            # Combine all descriptions from the current extraction batch
+            combined_desc = " ".join([d for d in data["descriptions"] if d.strip()])
+            
+            # Get existing nodes with exact same normalized name from DB
+            existing = self.storage.get_nodes_by_name(norm_name)
+            db_candidates = [node for node in existing if node['name'].strip().upper() == norm_name]
+            
+            if not db_candidates:
+                # Entirely new name to the graph
+                assigned_id = str(uuid.uuid4())
+                self.logger.info(f"Resolution: '{norm_name}' is entirely new. Assigned UUID {assigned_id}")
+                final_desc = combined_desc
+                display_name = original_ids[0]
+            else:
+                # Disambiguate against DB candidates (handling Homonyms)
+                db_desc_text = ""
+                for i, db_node in enumerate(db_candidates):
+                    db_desc_text += f"{i}: \"{db_node.get('description', '')}\"\n"
                     
-                    for node in existing:
-                        # Pre-check name similarity to avoid false positives on generic names
-                        name1_clean = name.lower().replace(" ", "")
-                        name2_clean = node['name'].lower().replace(" ", "")
-                        similarity = difflib.SequenceMatcher(None, name1_clean, name2_clean).ratio()
+                prompt = (
+                    f"You are an AI performing Entity Disambiguation.\n"
+                    f"We extracted a new entity named '{norm_name}'.\n"
+                    f"Description of extracted entity:\n\"{combined_desc}\"\n\n"
+                    f"We found existing entities in the database with the exact same name. Here are their descriptions:\n"
+                    f"{db_desc_text}\n"
+                    f"Does the newly extracted entity refer to the EXACT SAME real-world concept as any of the database entities?\n"
+                    f"If yes, return the integer index (e.g. 0 or 1) of the matching database entity.\n"
+                    f"If no (it is a homonym or completely different concept), return -1.\n"
+                    f"Return ONLY the integer. No other text."
+                )
+                
+                try:
+                    response = await self.llm_service.extractor.generate_async(prompt)
+                    
+                    if isinstance(response, str):
+                        match_idx = int(response.strip())
+                    else:
+                        match_idx = int(response)
                         
-                        if similarity < 0.8:
-                            self.logger.info(f"Resolution: Skipping LLM check for '{name}' vs '{node['name']}' (similarity {similarity:.2f} < 0.8)")
-                            continue
-                            
-                        prompt = f"Entity 1:\nName: {name}\nDescription: {ent.description}\n\nEntity 2:\nName: {node['name']}\nDescription: {node['description']}\n\nAre these exactly the same real-world entity? Consider their descriptions carefully."
-                        try:
-                            result = await self.llm_service.extractor.generate_async(prompt, schema=EntityMatchSchema, temperature=0.0)
-                            if isinstance(result, dict):
-                                is_same = result.get('is_same_entity', False)
-                            elif isinstance(result, str):
-                                parsed = json.loads(result.replace("```json", "").replace("```", "").strip())
-                                is_same = parsed.get('is_same_entity', False)
-                            else:
-                                is_same = False
-                        except Exception as e:
-                            self.logger.error(f"LLM match failed: {e}")
-                            is_same = False
-                            
-                        if is_same:
-                            best_match = node
-                            break
-                    
-                    if best_match:
-                        self.logger.info(f"Resolution: Merging '{name}' with {best_match['id']} via LLM logic")
+                    if 0 <= match_idx < len(db_candidates):
+                        best_match = db_candidates[match_idx]
                         assigned_id = best_match["id"]
+                        self.logger.info(f"Resolution: '{norm_name}' matched DB entity {assigned_id}.")
+                        
+                        # Synthesize descriptions
+                        merge_prompt = f"Combine these two descriptions of the entity '{norm_name}' into one coherent summary. Return ONLY the final combined summary.\n\nDescription 1: {best_match.get('description', '')}\nDescription 2: {combined_desc}"
+                        merged_desc = await self.llm_service.extractor.generate_async(merge_prompt)
+                        final_desc = str(merged_desc).strip()
+                        display_name = best_match.get("name", original_ids[0])
                     else:
                         assigned_id = str(uuid.uuid4())
-                        self.logger.info(f"Resolution: Disambiguating '{name}' via LLM logic. New UUID {assigned_id}")
-                
-                # Option B: Merge descriptions if we found a match
-                if best_match and assigned_id == best_match["id"] and best_match.get('description'):
-                    merge_prompt = f"Combine these two descriptions of the same entity '{name}' into one coherent summary. Return ONLY the final combined summary. Do not include introductory text, explanations, or multiple options. Just the summary.\n\nDesc 1: {best_match['description']}\n\nDesc 2: {ent.description}"
-                    try:
-                        self.logger.info(f"Resolution: Merging descriptions for '{name}' via LLM.")
-                        merged_desc = await self.llm_service.extractor.generate_async(merge_prompt, temperature=0.0)
-                        if isinstance(merged_desc, str) and merged_desc.strip():
-                            ent.description = merged_desc.strip()
-                    except Exception as e:
-                        self.logger.error(f"Failed to merge descriptions: {e}")
+                        self.logger.info(f"Resolution: '{norm_name}' is a new homonym. Assigned UUID {assigned_id}")
+                        final_desc = combined_desc
+                        display_name = original_ids[0]
+                        
+                except Exception as e:
+                    self.logger.error(f"Discriminator failed for '{norm_name}': {e}. Safely creating new entity.")
+                    assigned_id = str(uuid.uuid4())
+                    final_desc = combined_desc
+                    display_name = original_ids[0]
             
-            id_map[name] = assigned_id
+            ent.description = final_desc
             ent.metadata["id"] = assigned_id
-            ent.metadata["name"] = name
+            ent.metadata["name"] = display_name
+            
+            for orig_id in original_ids:
+                id_map[orig_id] = assigned_id
 
         return id_map
 

@@ -207,6 +207,7 @@ input:focus {
     gap: 0.5rem;
     transition: all 0.2s;
     width: 100%;
+    position: relative;
 }
 
 .primary-btn:hover {

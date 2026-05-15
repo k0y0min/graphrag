@@ -1,21 +1,47 @@
 steps:
-  # 1. Build Backend Image
+  # 1. Pull previous images to use as cache
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['build', '-t', 'europe-west4-docker.pkg.dev/$PROJECT_ID/graphrag/backend:$COMMIT_SHA', './backend']
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        docker pull europe-west4-docker.pkg.dev/$PROJECT_ID/graphrag/backend:latest || true
+        docker pull europe-west4-docker.pkg.dev/$PROJECT_ID/graphrag/vllm:latest || true
 
-  # 2. Build vLLM Image
+  # 2. Build Backend Image with cache
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['build', '-t', 'europe-west4-docker.pkg.dev/$PROJECT_ID/graphrag/vllm:$COMMIT_SHA', './vllm']
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        cp -r frontend backend/
+        docker build \
+          -t europe-west4-docker.pkg.dev/$PROJECT_ID/graphrag/backend:$COMMIT_SHA \
+          -t europe-west4-docker.pkg.dev/$PROJECT_ID/graphrag/backend:latest \
+          --cache-from europe-west4-docker.pkg.dev/$PROJECT_ID/graphrag/backend:latest \
+          ./backend
 
-  # 3. Push Backend Image
+  # 3. Build vLLM Image with cache
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'europe-west4-docker.pkg.dev/$PROJECT_ID/graphrag/backend:$COMMIT_SHA']
+    args:
+      - 'build'
+      - '-t'
+      - 'europe-west4-docker.pkg.dev/$PROJECT_ID/graphrag/vllm:$COMMIT_SHA'
+      - '-t'
+      - 'europe-west4-docker.pkg.dev/$PROJECT_ID/graphrag/vllm:latest'
+      - '--cache-from'
+      - 'europe-west4-docker.pkg.dev/$PROJECT_ID/graphrag/vllm:latest'
+      - './vllm'
 
-  # 4. Push vLLM Image
+  # 4. Push Backend Images
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'europe-west4-docker.pkg.dev/$PROJECT_ID/graphrag/vllm:$COMMIT_SHA']
+    args: ['push', 'europe-west4-docker.pkg.dev/$PROJECT_ID/graphrag/backend', '--all-tags']
 
-  # 5. Deploy vLLM Service (GPU)
+  # 5. Push vLLM Images
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'europe-west4-docker.pkg.dev/$PROJECT_ID/graphrag/vllm', '--all-tags']
+
+  # 6. Deploy vLLM Service (GPU)
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: 'bash'
     args:
@@ -32,9 +58,18 @@ steps:
           --max-instances 1 \
           --allow-unauthenticated \
           --set-secrets="HF_TOKEN=HF_TOKEN:latest" \
-          --port 8000
+          --port 8000 \
+          --startup-probe=tcpSocket.port=8000,initialDelaySeconds=60,periodSeconds=10,failureThreshold=30
 
-  # 6. Deploy Backend Service
+  # 6.5. Ensure DB bucket exists
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        gcloud storage buckets describe gs://graphrag-db-$$PROJECT_ID || gcloud storage buckets create gs://graphrag-db-$$PROJECT_ID --location=europe-west4
+
+  # 7. Deploy Backend Service
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: 'bash'
     args:
@@ -43,19 +78,25 @@ steps:
         # Dynamically fetch the URL of the deployed vLLM service
         VLLM_URL=$$(gcloud run services describe graphrag-vllm --region europe-west4 --format 'value(status.url)')
         
-        gcloud run deploy graphrag-backend \
-          --image europe-west4-docker.pkg.dev/$PROJECT_ID/graphrag/backend:$COMMIT_SHA \
+        gcloud beta run deploy graphrag-backend \
+          --image europe-west4-docker.pkg.dev/$$PROJECT_ID/graphrag/backend:$$COMMIT_SHA \
           --region europe-west4 \
           --cpu 1 \
           --memory 1Gi \
           --allow-unauthenticated \
-          --set-env-vars="VLLM_BASE_URL=$$VLLM_URL/v1,USE_GEMINI=true,GEMINI_MODEL=gemini/gemini-3-flash-preview" \
+          --execution-environment=gen2 \
+          --add-volume=name=db-volume,type=cloud-storage,bucket=graphrag-db-$$PROJECT_ID \
+          --add-volume-mount=volume=db-volume,mount-path=/app/db \
+          --set-env-vars="VLLM_BASE_URL=$$VLLM_URL/v1,USE_GEMINI=true,GEMINI_MODEL=gemini/gemini-3-flash-preview,CHUNKING_PPL_THRESHOLD=100.0,CHUNKING_MAX_TOKENS=100,FRONTEND_PATH=/app/frontend/static,DB_PATH=/app/db/demo_db,CLEAR_DB_ON_STARTUP=false,GEMINI_RPM_LIMIT=1000,VLLM_MODEL_NAME=unsloth/gemma-3-12b-it-FP8-Dynamic" \
           --set-secrets="GOOGLE_API_KEY=GOOGLE_API_KEY:latest" \
           --port 8080
 
 images:
   - 'europe-west4-docker.pkg.dev/$PROJECT_ID/graphrag/backend:$COMMIT_SHA'
+  - 'europe-west4-docker.pkg.dev/$PROJECT_ID/graphrag/backend:latest'
   - 'europe-west4-docker.pkg.dev/$PROJECT_ID/graphrag/vllm:$COMMIT_SHA'
+  - 'europe-west4-docker.pkg.dev/$PROJECT_ID/graphrag/vllm:latest'
 
 options:
   logging: CLOUD_LOGGING_ONLY
+  machineType: 'E2_HIGHCPU_8'

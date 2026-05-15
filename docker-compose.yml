@@ -10,7 +10,7 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./backend/db:/app/db
+      - graphrag_db:/app/db
       - ./backend/logs:/app/logs
       - ./frontend:/app/frontend
     env_file:
@@ -48,3 +48,6 @@ services:
               count: all
               capabilities: [gpu]
     restart: unless-stopped
+
+volumes:
+  graphrag_db:

@@ -129,9 +129,9 @@ class GraphExtractor:
             f"Context: {chunk.context}\n"
             f"Text: {chunk.text}\n\n"
             f"Rules:\n"
-            f"1. For any self-references (I, me, my), use the canonical entity ID 'User' unless the speaker's actual name is explicitly provided.\n"
+            f"1. For any self-references (I, me, my, mine, Narrator, Author, 'the user'), use the canonical entity ID 'User' unless the speaker's actual name is explicitly provided and clear.\n"
             f"2. Identical real-world entities MUST have the exact same ID.\n"
-            f"Extract all entities and relationships."
+            f"Extract all valid entities and relationships."
         )
         
         try:

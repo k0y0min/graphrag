@@ -324,8 +324,7 @@ clearDbBtn.addEventListener('click', async () => {
     }
 
     clearDbBtn.disabled = true;
-    clearDbBtn.innerHTML = '<i data-lucide="loader-2" class="spin"></i> Clearing...';
-    lucide.createIcons();
+    clearDbBtn.innerHTML = 'Clearing...';
 
     try {
         const res = await fetchApi(`/clear_db`, { method: 'POST' });
@@ -355,7 +354,7 @@ ingestBtn.addEventListener('click', async () => {
     if (!text) return;
 
     ingestBtn.disabled = true;
-    ingestBtn.innerHTML = '<i data-lucide="loader-2" class="spin"></i> Processing...';
+    ingestBtn.innerHTML = '<i data-lucide="loader-2" class="spin" style="position: absolute; left: 1rem;"></i> <span>Processing...</span>';
     lucide.createIcons();
     ingestStatus.innerText = '';
     ingestStatus.className = 'status-msg';
