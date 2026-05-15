@@ -67,7 +67,7 @@ steps:
     args:
       - '-c'
       - |
-        gcloud storage buckets describe gs://graphrag-db-$$PROJECT_ID || gcloud storage buckets create gs://graphrag-db-$$PROJECT_ID --location=europe-west4
+        gcloud storage buckets describe gs://graphrag-db-$PROJECT_ID || gcloud storage buckets create gs://graphrag-db-$PROJECT_ID --location=europe-west4
 
   # 7. Deploy Backend Service
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
@@ -79,13 +79,13 @@ steps:
         VLLM_URL=$$(gcloud run services describe graphrag-vllm --region europe-west4 --format 'value(status.url)')
         
         gcloud beta run deploy graphrag-backend \
-          --image europe-west4-docker.pkg.dev/$$PROJECT_ID/graphrag/backend:$$COMMIT_SHA \
+          --image europe-west4-docker.pkg.dev/$PROJECT_ID/graphrag/backend:$COMMIT_SHA \
           --region europe-west4 \
           --cpu 1 \
           --memory 1Gi \
           --allow-unauthenticated \
           --execution-environment=gen2 \
-          --add-volume=name=db-volume,type=cloud-storage,bucket=graphrag-db-$$PROJECT_ID \
+          --add-volume=name=db-volume,type=cloud-storage,bucket=graphrag-db-$PROJECT_ID \
           --add-volume-mount=volume=db-volume,mount-path=/app/db \
           --set-env-vars="VLLM_BASE_URL=$$VLLM_URL/v1,USE_GEMINI=true,GEMINI_MODEL=gemini/gemini-3-flash-preview,CHUNKING_PPL_THRESHOLD=100.0,CHUNKING_MAX_TOKENS=100,FRONTEND_PATH=/app/frontend/static,DB_PATH=/app/db/demo_db,CLEAR_DB_ON_STARTUP=false,GEMINI_RPM_LIMIT=1000,VLLM_MODEL_NAME=unsloth/gemma-3-12b-it-FP8-Dynamic" \
           --set-secrets="GOOGLE_API_KEY=GOOGLE_API_KEY:latest" \
