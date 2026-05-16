@@ -24,9 +24,21 @@ services:
       - VLLM_MODEL_NAME=unsloth/gemma-3-12b-it-FP8-Dynamic
       - CHUNKING_PPL_THRESHOLD=100.0
       - CHUNKING_MAX_TOKENS=100
-      - FRONTEND_PATH=/app/frontend/static
+      - FRONTEND_PATH=/app/frontend/static # Keeps static path for safety, but frontend served natively
     depends_on:
       - vllm-service
+    restart: always
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+    environment:
+      - BACKEND_URL=http://localhost:8080/api
+    depends_on:
+      - backend
     restart: always
 
   vllm-service:

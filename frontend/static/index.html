@@ -24,30 +24,59 @@
             left: 0 !important;
             width: 100% !important;
             height: 100% !important;
-            background: #0f172a !important;
+            background: var(--bg-dark) !important;
             display: flex !important;
             justify-content: center !important;
             align-items: center !important;
             z-index: 99999 !important;
-            transition: opacity 0.5s ease;
+            transition: opacity 0.5s ease, backdrop-filter 0.5s ease;
+            backdrop-filter: blur(8px);
         }
 
         .loading-overlay.hidden {
             opacity: 0;
             pointer-events: none;
+            backdrop-filter: blur(0px);
         }
 
-        .spin {
-            animation: spin 1s linear infinite;
+        .pulse-ring {
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            background: rgba(136, 192, 208, 0.1);
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-bottom: 24px;
         }
 
-        @keyframes spin {
-            from {
-                transform: rotate(0deg);
+        .pulse-ring::before {
+            content: '';
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            background: var(--accent);
+            opacity: 0;
+            animation: pulse-out 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+        }
+
+        .pulse-ring i {
+            color: var(--accent);
+            z-index: 1;
+            width: 24px;
+            height: 24px;
+        }
+
+        @keyframes pulse-out {
+            0% {
+                transform: scale(0.8);
+                opacity: 0.8;
             }
-
-            to {
-                transform: rotate(360deg);
+            100% {
+                transform: scale(2.5);
+                opacity: 0;
             }
         }
     </style>
@@ -58,11 +87,11 @@
 
 <body>
     <div id="loading-overlay" class="loading-overlay">
-        <div class="loading-content" style="text-align: center; color: white; font-family: 'Outfit', sans-serif;">
-            <i data-lucide="loader-2" class="spin"
-                style="width: 48px; height: 48px; color: #6366f1; margin-bottom: 20px;"></i>
-            <h2 style="font-size: 1.75rem; margin-bottom: 10px;">Waking up GraphRAG</h2>
-            <p style="color: #94a3b8;">The backend is initializing LLM models. This might take a minute...</p>
+        <div class="loading-content" style="text-align: center; color: var(--text-secondary); font-family: 'Outfit', sans-serif; display: flex; flex-direction: column; align-items: center;">
+            <div class="pulse-ring">
+                <i data-lucide="network"></i>
+            </div>
+            <p style="font-size: 0.85rem; letter-spacing: 2px; text-transform: uppercase; font-weight: 600; opacity: 0.7;">Loading</p>
         </div>
     </div>
 
@@ -221,46 +250,9 @@
 
     <!-- Dynamic Config -->
     <script src="config.js"></script>
-    <script src="static/js/app.js?v=4"></script>
+    <script src="static/js/app.js?v=5"></script>
     <script>
         lucide.createIcons();
     </script>
 </body>
-
-</html> <input type="checkbox" id="relation-labels-toggle" checked>
-<span class="slider"></span>
-</label>
-</div>
-<div class="control-group toggle-item">
-    <span>Hierarchical Layout</span>
-    <label class="toggle mini-toggle">
-        <input type="checkbox" id="hierarchical-toggle">
-        <span class="slider"></span>
-    </label>
-</div>
-</div>
-
-
-
-</aside>
-
-<!-- Main: Graph Visualization -->
-<main class="main-content">
-    <div id="network-container" class="glass-panel"></div>
-    <div class="overlay-controls">
-        <button class="icon-btn" id="fit-btn" title="Fit Graph"><i data-lucide="maximize"></i></button>
-    </div>
-
-</main>
-</div>
-
-
-<!-- Dynamic Config -->
-<script src="config.js"></script>
-<script src="static/js/app.js?v=4"></script>
-<script>
-    lucide.createIcons();
-</script>
-</body>
-
 </html>

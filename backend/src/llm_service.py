@@ -57,7 +57,8 @@ class VLLMBackend(LLMBackend):
                 prompt=full_text,
                 max_tokens=0,
                 echo=True,
-                logprobs=1
+                logprobs=1,
+                timeout=3.0
             )
             
             token_logprobs = response.choices[0].logprobs.token_logprobs

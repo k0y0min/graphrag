@@ -87,15 +87,46 @@ steps:
           --execution-environment=gen2 \
           --add-volume=name=db-volume,type=cloud-storage,bucket=graphrag-db-$PROJECT_ID \
           --add-volume-mount=volume=db-volume,mount-path=/app/db \
-          --set-env-vars="VLLM_BASE_URL=$$VLLM_URL/v1,USE_GEMINI=true,GEMINI_MODEL=gemini/gemini-3-flash-preview,CHUNKING_PPL_THRESHOLD=100.0,CHUNKING_MAX_TOKENS=100,FRONTEND_PATH=/app/frontend/static,DB_PATH=/app/db/demo_db,CLEAR_DB_ON_STARTUP=false,GEMINI_RPM_LIMIT=1000,VLLM_MODEL_NAME=unsloth/gemma-3-12b-it-FP8-Dynamic" \
+          --set-env-vars="VLLM_BASE_URL=$$VLLM_URL/v1,USE_GEMINI=true,GEMINI_MODEL=gemini/gemini-3-flash-preview,CHUNKING_PPL_THRESHOLD=100.0,CHUNKING_MAX_TOKENS=100,DB_PATH=/app/db/demo_db,CLEAR_DB_ON_STARTUP=false,GEMINI_RPM_LIMIT=1000,VLLM_MODEL_NAME=unsloth/gemma-3-12b-it-FP8-Dynamic" \
           --set-secrets="GOOGLE_API_KEY=GOOGLE_API_KEY:latest" \
           --port 8080
+
+  # 8. Build Frontend Image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'europe-west4-docker.pkg.dev/$PROJECT_ID/graphrag/frontend:$COMMIT_SHA'
+      - '-t'
+      - 'europe-west4-docker.pkg.dev/$PROJECT_ID/graphrag/frontend:latest'
+      - './frontend'
+
+  # 9. Push Frontend Image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'europe-west4-docker.pkg.dev/$PROJECT_ID/graphrag/frontend', '--all-tags']
+
+  # 10. Deploy Frontend Service
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        BACKEND_URL=$$(gcloud run services describe graphrag-backend --region europe-west4 --format 'value(status.url)')
+        
+        gcloud run deploy graphrag-frontend \
+          --image europe-west4-docker.pkg.dev/$PROJECT_ID/graphrag/frontend:$COMMIT_SHA \
+          --region europe-west4 \
+          --allow-unauthenticated \
+          --set-env-vars="BACKEND_URL=$$BACKEND_URL/api" \
+          --port 80
 
 images:
   - 'europe-west4-docker.pkg.dev/$PROJECT_ID/graphrag/backend:$COMMIT_SHA'
   - 'europe-west4-docker.pkg.dev/$PROJECT_ID/graphrag/backend:latest'
   - 'europe-west4-docker.pkg.dev/$PROJECT_ID/graphrag/vllm:$COMMIT_SHA'
   - 'europe-west4-docker.pkg.dev/$PROJECT_ID/graphrag/vllm:latest'
+  - 'europe-west4-docker.pkg.dev/$PROJECT_ID/graphrag/frontend:$COMMIT_SHA'
+  - 'europe-west4-docker.pkg.dev/$PROJECT_ID/graphrag/frontend:latest'
 
 options:
   logging: CLOUD_LOGGING_ONLY
