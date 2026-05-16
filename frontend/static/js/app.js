@@ -45,12 +45,12 @@ async function fetchApi(endpoint, options = {}) {
     if (authToken) {
         headers['Authorization'] = `Bearer ${authToken}`;
     }
-    
+
     const response = await fetch(`${BACKEND_URL}${endpoint}`, {
         ...options,
         headers
     });
-    
+
     if (response.status === 401 && endpoint !== '/auth/login') {
         logout();
         throw new Error("Unauthorized. Please log in.");
@@ -83,7 +83,7 @@ function setupAuthListeners() {
         authSubmitBtn.innerText = 'Sign In';
         authError.innerText = '';
     });
-    
+
     authTabRegister.addEventListener('click', () => {
         authMode = 'register';
         authTabRegister.classList.add('active');
@@ -91,7 +91,7 @@ function setupAuthListeners() {
         authSubmitBtn.innerText = 'Create Account';
         authError.innerText = '';
     });
-    
+
     authSubmitBtn.addEventListener('click', async () => {
         const username = authUsername.value.trim();
         const password = authPassword.value;
@@ -99,10 +99,10 @@ function setupAuthListeners() {
             authError.innerText = "Username and password required.";
             return;
         }
-        
+
         authSubmitBtn.disabled = true;
         authSubmitBtn.innerText = 'Processing...';
-        
+
         try {
             if (authMode === 'register') {
                 const res = await fetch(`${BACKEND_URL}/auth/register`, {
@@ -112,7 +112,7 @@ function setupAuthListeners() {
                 });
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.detail || 'Registration failed');
-                
+
                 // Auto-login after register
                 authTabLogin.click();
                 authSubmitBtn.innerText = 'Registration successful! Click Sign In.';
@@ -124,10 +124,10 @@ function setupAuthListeners() {
                 });
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.detail || 'Login failed');
-                
+
                 authToken = data.access_token;
                 localStorage.setItem('graphrag_token', authToken);
-                
+
                 authOverlay.classList.add('hidden');
                 initGraph();
             }
@@ -159,7 +159,7 @@ function showEphemeralToast(message, duration = 5000) {
     toast.innerText = message;
     toast.style.opacity = '1';
     toast.style.display = 'block';
-    
+
     setTimeout(() => {
         toast.style.opacity = '0';
         setTimeout(() => { toast.style.display = 'none'; }, 500);
@@ -168,10 +168,10 @@ function showEphemeralToast(message, duration = 5000) {
 
 async function checkBackendReady() {
     const loadingOverlay = document.getElementById('loading-overlay');
-    
+
     // Hide loading overlay immediately to let user interact
     if (loadingOverlay) loadingOverlay.classList.add('hidden');
-    
+
     if (authToken) {
         initGraph();
     } else {
@@ -184,7 +184,7 @@ async function checkBackendReady() {
 
 async function pollBackendStatus() {
     let shownWarmingUpMessage = false;
-    
+
     while (true) {
         try {
             const res = await fetch(`${BACKEND_URL}/health`);
@@ -195,7 +195,7 @@ async function pollBackendStatus() {
                     break; // Stop polling
                 } else if (data.status === 'warming_up') {
                     if (!shownWarmingUpMessage) {
-                        showEphemeralToast("vLLM is currently booting up (approx. 3-5 mins). Ingestion will temporarily use high-speed fixed chunking.", 6000);
+                        showEphemeralToast("vLLM warming up (~5 mins). Ingestion falling back to fixed-size chunking instead of perplexity-based chunking.", 6000);
                         shownWarmingUpMessage = true;
                     }
                 }
@@ -211,7 +211,7 @@ async function pollBackendStatus() {
 tabBtns.forEach(btn => {
     // Only process if it's not an auth tab
     if (btn.id.startsWith('auth-tab')) return;
-    
+
     btn.addEventListener('click', () => {
         tabBtns.forEach(b => {
             if (!b.id.startsWith('auth-tab')) b.classList.remove('active');
