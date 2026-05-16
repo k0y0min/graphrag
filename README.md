@@ -78,6 +78,7 @@ graph TD
 - [ ] Fine-tune perplexity spike threshold for different types of texts.
 - [ ] Add graph layout saving (freeze nodes in specific positions).
 - [ ] Checkout FalkorDB and compare.
+- [ ] Improve entity resolution (long term).
 
 ---
 
