@@ -91,17 +91,32 @@ class QueryRequest(BaseModel):
 
 # --- API Endpoints ---
 
+import asyncio
+from src.llm_service import vllm_state
+
+@app.on_event("startup")
+async def startup_event():
+    async def poll_vllm():
+        vllm_url = os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1")
+        while not vllm_state.is_ready:
+            try:
+                import httpx
+                async with httpx.AsyncClient() as client:
+                    res = await client.get(f"{vllm_url}/models", timeout=2.0)
+                    if res.status_code == 200:
+                        vllm_state.is_ready = True
+                        logger.info("vLLM is globally ready!")
+                        break
+            except Exception:
+                pass
+            await asyncio.sleep(5)
+            
+    asyncio.create_task(poll_vllm())
+
 @app.get("/api/health")
 async def health_check():
-    vllm_url = os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1")
-    try:
-        import httpx
-        async with httpx.AsyncClient() as client:
-            response = await client.get(f"{vllm_url}/models", timeout=2.0)
-            if response.status_code == 200:
-                return {"status": "healthy", "llm": "connected"}
-    except Exception:
-        pass
+    if vllm_state.is_ready:
+        return {"status": "healthy", "llm": "connected"}
     
     return {
         "status": "warming_up", 

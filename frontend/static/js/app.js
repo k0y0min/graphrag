@@ -195,7 +195,7 @@ async function pollBackendStatus() {
                     break; // Stop polling
                 } else if (data.status === 'warming_up') {
                     if (!shownWarmingUpMessage) {
-                        showEphemeralToast("vLLM is warming up (takes ~5 mins). Perplexity chunking is inactive; falling back to fixed-size chunking for now.", 6000);
+                        showEphemeralToast("vLLM is currently booting up (approx. 3-5 mins). Ingestion will temporarily use high-speed fixed chunking.", 6000);
                         shownWarmingUpMessage = true;
                     }
                 }

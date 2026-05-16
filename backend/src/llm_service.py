@@ -30,6 +30,12 @@ class LLMBackend(ABC):
     async def get_sentence_perplexities_async(self, sentences: List[str]) -> List[float]:
         return await asyncio.to_thread(self.get_sentence_perplexities, sentences)
 
+class VLLMState:
+    def __init__(self):
+        self.is_ready = False
+
+vllm_state = VLLMState()
+
 class VLLMBackend(LLMBackend):
     """
     Backend for connecting to a local vLLM server.
@@ -48,6 +54,8 @@ class VLLMBackend(LLMBackend):
         Calculates real perplexity using vLLM's logprobs API.
         """
         if not sentences: return []
+        if not vllm_state.is_ready:
+            return [0.0] * len(sentences)
         
         full_text = " ".join(sentences)
         
