@@ -119,12 +119,6 @@ steps:
           --allow-unauthenticated \
           --set-env-vars="BACKEND_URL=$$BACKEND_URL/api" \
           --port 80
-        
-        # Explicitly ensure the service is public
-        gcloud run services add-iam-policy-binding graphrag-frontend \
-          --region europe-west4 \
-          --member="allUsers" \
-          --role="roles/run.invoker"
 
 images:
   - 'europe-west4-docker.pkg.dev/$PROJECT_ID/graphrag/backend:$COMMIT_SHA'

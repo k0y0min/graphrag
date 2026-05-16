@@ -63,8 +63,10 @@ function logout() {
     localStorage.removeItem('graphrag_token');
     authOverlay.classList.remove('hidden');
     if (network) {
-        nodesDS.clear();
-        edgesDS.clear();
+        network.destroy();
+        network = null;
+        nodesDS = null;
+        edgesDS = null;
     }
 }
 
@@ -169,7 +171,20 @@ function showEphemeralToast(message, duration = 5000) {
 async function checkBackendReady() {
     const loadingOverlay = document.getElementById('loading-overlay');
 
-    // Hide loading overlay immediately to let user interact
+    // Wait until backend is alive
+    while (true) {
+        try {
+            const res = await fetch(`${BACKEND_URL}/health`);
+            if (res.ok) {
+                break; // API is responding
+            }
+        } catch (e) {
+            // Connection refused / DNS error, keep waiting
+        }
+        await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+
+    // Now it's safe to hide the loading overlay and let user interact
     if (loadingOverlay) loadingOverlay.classList.add('hidden');
 
     if (authToken) {
@@ -178,7 +193,7 @@ async function checkBackendReady() {
         authOverlay.classList.remove('hidden');
     }
 
-    // Start background polling
+    // Start background polling for vLLM status
     pollBackendStatus();
 }
 
