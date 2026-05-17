@@ -87,7 +87,7 @@ steps:
           --execution-environment=gen2 \
           --add-volume=name=db-volume,type=cloud-storage,bucket=graphrag-db-$PROJECT_ID \
           --add-volume-mount=volume=db-volume,mount-path=/app/db \
-          --set-env-vars="VLLM_BASE_URL=$$VLLM_URL/v1,USE_GEMINI=true,GEMINI_MODEL=gemini/gemini-3-flash-preview,CHUNKING_PPL_THRESHOLD=100.0,CHUNKING_MAX_TOKENS=100,DB_PATH=/app/db/demo_db,CLEAR_DB_ON_STARTUP=false,GEMINI_RPM_LIMIT=1000,VLLM_MODEL_NAME=unsloth/gemma-3-12b-it-FP8-Dynamic" \
+          --set-env-vars="VLLM_BASE_URL=$$VLLM_URL/v1,USE_GEMINI=true,GEMINI_MODEL=gemini/gemini-3.0-flash,CHUNKING_PPL_THRESHOLD=100.0,CHUNKING_MAX_TOKENS=100,DB_PATH=/app/db/demo_db,CLEAR_DB_ON_STARTUP=false,GEMINI_RPM_LIMIT=1000,VLLM_MODEL_NAME=unsloth/gemma-3-12b-it-FP8-Dynamic" \
           --set-secrets="GOOGLE_API_KEY=GOOGLE_API_KEY:latest" \
           --port 8080
 

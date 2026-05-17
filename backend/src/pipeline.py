@@ -43,7 +43,7 @@ class GraphRAGPipeline:
         
         if use_gemini:
             from src.llm_service import LiteLLMBackend
-            gemini_model = os.getenv("GEMINI_MODEL", "gemini/gemini-2.5-flash")
+            gemini_model = os.getenv("GEMINI_MODEL", "gemini/gemini-3.0-flash")
             gemini_backend = LiteLLMBackend(model_name=gemini_model)
             
             self.llm_service = LLMService(
