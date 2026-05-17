@@ -84,6 +84,7 @@ steps:
           --cpu 1 \
           --memory 1Gi \
           --allow-unauthenticated \
+          --no-cpu-throttling \
           --execution-environment=gen2 \
           --add-volume=name=db-volume,type=cloud-storage,bucket=graphrag-db-$PROJECT_ID \
           --add-volume-mount=volume=db-volume,mount-path=/app/db \
@@ -117,6 +118,7 @@ steps:
           --image europe-west4-docker.pkg.dev/$PROJECT_ID/graphrag/frontend:$COMMIT_SHA \
           --region europe-west4 \
           --allow-unauthenticated \
+          --no-cpu-throttling \
           --set-env-vars="BACKEND_URL=$$BACKEND_URL/api" \
           --port 80
 
