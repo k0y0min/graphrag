@@ -73,7 +73,7 @@ graph TD
 
 ## 📋 TODO:
 
-- [*] ~~Implement user authentication & session management properly.~~ (half decent)
+- [X] ~~Implement user authentication & session management properly.~~ (half decent)
 - [ ] Add support for document/multimodal uploads.
 - [ ] Fine-tune perplexity spike threshold for different types of texts.
 - [ ] Add graph layout saving(freeze nodes in specific positions) and other QOL features.
