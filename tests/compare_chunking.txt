@@ -1,0 +1,72 @@
+==================================================
+INPUT TEXT:
+==================================================
+GraphRAG (Graphs + Retrieval Augmented Generation) is a technique that combines knowledge graphs with LLMs. Instead of relying purely on vector similarity, it traverses relationships to find interconnected context. This is particularly useful for complex reasoning over large documents.
+
+However, traditional chunking destroys relationships. If a sentence about "Elon Musk" is in chunk A, and "SpaceX" is in chunk B, the connection might be lost.
+
+Perplexity chunking solves this by using the LLM's own causal matrix to find semantic boundaries. When the LLM is 'surprised' by a word (high perplexity), it implies a shift in context, making it a perfect place to split the chunk.
+
+
+==================================================
+1. FIXED-SIZE CHUNKING (Strict 50 tokens)
+==================================================
+[Chunk 1]: GraphRAG (Graphs + Retrieval Augmented Generation) is a technique that combines knowledge graphs with LLMs. Instead of relying purely on vector similarity, it traverses relationships to find interconnected context. This is particularly useful for complex reasoning over
+[Chunk 2]: large documents.
+
+However, traditional chunking destroys relationships. If a sentence about "Elon Musk" is in chunk A, and "SpaceX" is in chunk B, the connection might be lost.
+
+Perplexity chunking solves this by using
+[Chunk 3]: the LLM's own causal matrix to find semantic boundaries. When the LLM is 'surprised' by a word (high perplexity), it implies a shift in context, making it a perfect place to split the chunk.
+
+
+==================================================
+2. RECURSIVE CHARACTER CHUNKING (SOTA Practice)
+==================================================
+[Chunk 1]: GraphRAG (Graphs + Retrieval Augmented Generation) is a technique that combines knowledge graphs with LLMs. Instead of relying
+[Chunk 2]: purely on vector similarity, it traverses relationships to find interconnected context. This is particularly useful for complex reasoning over large
+[Chunk 3]: documents.
+[Chunk 4]: 
+[Chunk 5]: However, traditional chunking destroys relationships. If a sentence about "Elon Musk" is in chunk A, and "SpaceX" is in chunk B, the connection might be lost.
+[Chunk 6]: Perplexity chunking solves this by using the LLM's own causal matrix to find semantic boundaries. When the LLM is
+[Chunk 7]: 'surprised' by a word (high perplexity), it implies a shift in context, making it a perfect place to split the
+[Chunk 8]: chunk.
+
+
+==================================================
+3. SEMANTIC CHUNKING (Cosine Similarity < 0.5)
+==================================================
+[Chunk 1]: GraphRAG (Graphs + Retrieval Augmented Generation) is a technique that combines knowledge graphs with LLMs.
+[Chunk 2]: Instead of relying purely on vector similarity, it traverses relationships to find interconnected context.
+[Chunk 3]: This is particularly useful for complex reasoning over large documents.
+[Chunk 4]: However, traditional chunking destroys relationships.
+[Chunk 5]: If a sentence about "Elon Musk" is in chunk A, and "SpaceX" is in chunk B, the connection might be lost.
+[Chunk 6]: Perplexity chunking solves this by using the LLM's own causal matrix to find semantic boundaries.
+[Chunk 7]: When the LLM is 'surprised' by a word (high perplexity), it implies a shift in context, making it a perfect place to split the chunk.
+
+
+==================================================
+4. PERPLEXITY CHUNKING (GraphRAG Native, Max 50t)
+==================================================
+[*] Waiting for remote vLLM to be fully active...
+[*] vLLM is awake and responding! Proceeding...
+   [vLLM Score] Running vectorized forward pass for semantic boundaries...
+   [vLLM Score] Evaluating sentence context: 1/7 (PPL: 13.95)
+   [vLLM Score] Evaluating sentence context: 2/7 (PPL: 37.15)
+   [vLLM Score] Evaluating sentence context: 3/7 (PPL: 12.41)
+   [vLLM Score] Evaluating sentence context: 4/7 (PPL: 105.69)
+   [vLLM Score] Evaluating sentence context: 5/7 (PPL: 4.33)
+   [vLLM Score] Evaluating sentence context: 6/7 (PPL: 26.70)
+   [vLLM Score] Evaluating sentence context: 7/7 (PPL: 4.41)
+[Chunk 1]: GraphRAG (Graphs + Retrieval Augmented Generation) is a technique that combines knowledge graphs with LLMs. Instead of relying purely on vector similarity, it traverses relationships to find interconnected context.
+[Chunk 2]: This is particularly useful for complex reasoning over large documents.
+[Chunk 3]: However, traditional chunking destroys relationships. If a sentence about "Elon Musk" is in chunk A, and "SpaceX" is in chunk B, the connection might be lost.
+[Chunk 4]: Perplexity chunking solves this by using the LLM's own causal matrix to find semantic boundaries.
+[Chunk 5]: When the LLM is 'surprised' by a word (high perplexity), it implies a shift in context, making it a perfect place to split the chunk.
+
+
+==== FINDINGS ====
+- Fixed: strict token caps break semantic cohesion, so this is the weakest ingestion option here.
+- Recursive: preserves local structure, but may still split related content in ways that are not intelligence-aware.
+- Semantic: aggressively chunks resulting in individual sentence-chunks. Doesn't preserve inter-sentence realtions (breaking a coherent paragraph into well separated sentences is still bad).
+- Perplexity: results in chunking only when a true context switch occurs or token limit is hit, resulting in intelligent chunks minimizing information loss(or faulty KG-triples) due to poor chunking.
