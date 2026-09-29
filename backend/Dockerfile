@@ -17,9 +17,12 @@ ENV PATH="/root/.local/bin:${PATH}"
 COPY pyproject.toml uv.lock ./
 
 # Sync dependencies using uv
-RUN uv sync --frozen
+RUN uv sync
 
-# Copy the application code
+# Pre-download NLTK tokenizers so runtime never hits network errors
+RUN uv run python -m nltk.downloader punkt punkt_tab
+
+# Copy the application code (including frontend/static)
 COPY . .
 
 # Expose the API port
@@ -28,6 +31,7 @@ EXPOSE 8080
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV DB_PATH=db/demo_db
+ENV FRONTEND_PATH=/app/frontend/static
 
 # Command to run the API
 CMD sh -c "uv run uvicorn api:app --host 0.0.0.0 --port ${PORT:-8080}"

@@ -1,92 +1,64 @@
 import os
 import shutil
 import uuid
-import hashlib
-import math
 import json
+import logging
 import asyncio
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 from src.logger import PipelineLogger
-from src.ingestion import LineMap, HierarchyDetector, DocumentTreeBuilder
-from src.chunking import AncestryInjector, PerplexityChunker
+from src.chunking import ContextualChunker, FinalChunk
 from src.extraction import GraphExtractor, Entity, Relation
 from src.community import detect_communities
 from src.storage import GraphStorage
-from src.llm_service import LLMService, VLLMBackend
+from src.llm_service import LLMService, LiteLLMBackend, VLLMBackend
+from src.langgraph_rag import LangGraphRAGEngine
 
 class QueryEntities(BaseModel):
     """Schema for extracting entity names from a user query."""
     entities: List[str] = Field(description="List of entity names found in the query")
-
-class EntityMatchSchema(BaseModel):
-    is_same_entity: bool = Field(description="True if the new entity is the exact same real-world entity as the existing one, False otherwise")
 
 class GraphRAGPipeline:
     def __init__(self, db_path="db/demo_db", log_enabled=True, clear_db=False):
         self.db_path = db_path
         self.logger = PipelineLogger(enabled=log_enabled)
         
-        # Initialize Storage (Singleton)
+        # Initialize LadybugDB Storage (Singleton)
         self.storage = GraphStorage(self.db_path, clear_existing=clear_db)
         if clear_db:
              self.logger.info("Database cleared on pipeline initialization.")
-        
 
-        # In pipeline.py __init__
-        vllm_url = os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1")
-        model_name = os.getenv("VLLM_MODEL_NAME", "nvidia/Gemma-4-31B-IT-NVFP4")
-        unified_vllm = VLLMBackend(model_name=model_name, base_url=vllm_url)
+        # Default model: Gemini 3.8 Flash via Vertex AI / ADC
+        gemini_model = os.getenv("GEMINI_MODEL", "vertex_ai/gemini-3.8-flash")
+        gemini_backend = LiteLLMBackend(model_name=gemini_model)
 
-
-        use_gemini = os.getenv("USE_GEMINI", "false").lower() == "true"
-        
-        if use_gemini:
-            from src.llm_service import LiteLLMBackend
-            gemini_model = os.getenv("GEMINI_MODEL", "gemini/gemini-3.0-flash")
-            gemini_backend = LiteLLMBackend(model_name=gemini_model)
-            
+        use_vllm = os.getenv("USE_VLLM", "false").lower() == "true"
+        if use_vllm:
+            vllm_url = os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1")
+            vllm_model = os.getenv("VLLM_MODEL_NAME", "unsloth/gemma-3-12b-it-FP8-Dynamic")
+            vllm_backend = VLLMBackend(model_name=vllm_model, base_url=vllm_url)
             self.llm_service = LLMService(
-                chunking_model=unified_vllm, 
+                chunking_model=vllm_backend, 
                 extraction_model=gemini_backend
             )
-            self.logger.info(f"Initialized with Gemini ({gemini_model}) for extraction/querying.")
+            self.logger.info(f"Initialized with vLLM ({vllm_model}) + Gemini ({gemini_model})")
         else:
             self.llm_service = LLMService(
-                chunking_model=unified_vllm, 
-                extraction_model=unified_vllm
+                chunking_model=gemini_backend, 
+                extraction_model=gemini_backend
             )
-            self.logger.info("Initialized with vLLM for all tasks.")
+            self.logger.info(f"Initialized monolithic pipeline with Gemini 3.8 Flash ({gemini_model}) via ADC.")
 
-        # Cleanup stale ingestion files on boot
-        temp_dir = "temp_ingestion"
-        if os.path.exists(temp_dir):
-            try:
-                shutil.rmtree(temp_dir)
-                self.logger.info(f"Cleaned up stale temp directory: {temp_dir}")
-            except Exception as e:
-                self.logger.error(f"Failed to cleanup stale temp directory: {e}")
-
-
-
-    def _cosine_similarity(self, v1: List[float], v2: List[float]) -> float:
-        if not v1 or not v2: return 0.0
-        dot_product = sum(a * b for a, b in zip(v1, v2))
-        magnitude_v1 = math.sqrt(sum(a * a for a in v1))
-        magnitude_v2 = math.sqrt(sum(b * b for b in v2))
-        if magnitude_v1 == 0 or magnitude_v2 == 0: return 0.0
-        return dot_product / (magnitude_v1 * magnitude_v2)
+        # Initialize LangGraph Adaptive Multi-Agent Hybrid RAG engine
+        self.langgraph_engine = LangGraphRAGEngine(self.storage, self.llm_service.extractor)
 
     async def resolve_entities_async(self, entities: List[Entity]) -> Dict[str, str]:
         """
         Resolves extracted entities to existing nodes OR new unique nodes.
-        Uses Exact Name grouping combined with an LLM Discriminator to gracefully handle homonyms.
+        Uses exact name grouping combined with an LLM discriminator for homonyms.
         Returns a mapping of {extraction_id: assigned_unique_id}.
         """
-        id_map = {} # Original Extraction ID -> New/Existing UUID
-        
-        # 1. Deduplicate extracted entities by normalized name (uppercase)
-        # We assume if the extractor gave them the exact same ID string in one batch, they are the same concept.
+        id_map = {}
         unique_extracted = {}
         for ent in entities:
             norm_name = ent.id.strip().upper()
@@ -96,31 +68,25 @@ class GraphRAGPipeline:
                 if ent.id not in unique_extracted[norm_name]["original_ids"]:
                     unique_extracted[norm_name]["original_ids"].append(ent.id)
                 unique_extracted[norm_name]["descriptions"].append(ent.description)
-        
-        # 2. Process each unique normalized entity
+
         for norm_name, data in unique_extracted.items():
             ent = data["entity"]
             original_ids = data["original_ids"]
-            
-            # Combine all descriptions from the current extraction batch
             combined_desc = " ".join([d for d in data["descriptions"] if d.strip()])
-            
-            # Get existing nodes with exact same normalized name from DB
+
             existing = self.storage.get_nodes_by_name(norm_name)
-            db_candidates = [node for node in existing if node['name'].strip().upper() == norm_name]
-            
+            db_candidates = [node for node in existing if node.get('name', '').strip().upper() == norm_name]
+
             if not db_candidates:
-                # Entirely new name to the graph
                 assigned_id = str(uuid.uuid4())
                 self.logger.info(f"Resolution: '{norm_name}' is entirely new. Assigned UUID {assigned_id}")
                 final_desc = combined_desc
                 display_name = original_ids[0]
             else:
-                # Disambiguate against DB candidates (handling Homonyms)
                 db_desc_text = ""
                 for i, db_node in enumerate(db_candidates):
                     db_desc_text += f"{i}: \"{db_node.get('description', '')}\"\n"
-                    
+
                 prompt = (
                     f"You are an AI performing Entity Disambiguation.\n"
                     f"We extracted a new entity named '{norm_name}'.\n"
@@ -132,21 +98,19 @@ class GraphRAGPipeline:
                     f"If no (it is a homonym or completely different concept), return -1.\n"
                     f"Return ONLY the integer. No other text."
                 )
-                
+
                 try:
                     response = await self.llm_service.extractor.generate_async(prompt)
-                    
                     if isinstance(response, str):
                         match_idx = int(response.strip())
                     else:
                         match_idx = int(response)
-                        
+
                     if 0 <= match_idx < len(db_candidates):
                         best_match = db_candidates[match_idx]
                         assigned_id = best_match["id"]
                         self.logger.info(f"Resolution: '{norm_name}' matched DB entity {assigned_id}.")
-                        
-                        # Synthesize descriptions
+
                         merge_prompt = f"Combine these two descriptions of the entity '{norm_name}' into one coherent summary. Return ONLY the final combined summary.\n\nDescription 1: {best_match.get('description', '')}\nDescription 2: {combined_desc}"
                         merged_desc = await self.llm_service.extractor.generate_async(merge_prompt)
                         final_desc = str(merged_desc).strip()
@@ -156,22 +120,20 @@ class GraphRAGPipeline:
                         self.logger.info(f"Resolution: '{norm_name}' is a new homonym. Assigned UUID {assigned_id}")
                         final_desc = combined_desc
                         display_name = original_ids[0]
-                        
                 except Exception as e:
                     self.logger.error(f"Discriminator failed for '{norm_name}': {e}. Safely creating new entity.")
                     assigned_id = str(uuid.uuid4())
                     final_desc = combined_desc
                     display_name = original_ids[0]
-            
+
             ent.description = final_desc
             ent.metadata["id"] = assigned_id
             ent.metadata["name"] = display_name
-            
+
             for orig_id in original_ids:
                 id_map[orig_id] = assigned_id
 
         return id_map
-
 
     def _report_progress(self, stage: str, current: int, total: int, status: str):
         """Standardized progress update helper for the frontend."""
@@ -185,116 +147,66 @@ class GraphRAGPipeline:
         }
 
     async def ingest_async(self, text: str, input_filename=None, clear_db=False):
-        doc_id = str(uuid.uuid4())[:8]
-
-        temp_dir = "temp_ingestion"
-        if not os.path.exists(temp_dir):
-            os.makedirs(temp_dir)
-
-        if not input_filename:
-            input_filename = os.path.join(temp_dir, f"temp_{doc_id}.md")
-        else:
-            if not os.path.isabs(input_filename):
-                input_filename = os.path.join(temp_dir, input_filename)
-            
-        with open(input_filename, "w") as f:
-            f.write(text)
-        
+        """
+        Async streaming ingestion pipeline leveraging Anthropic Contextual Retrieval.
+        Enriches chunks with document-level context and builds LadybugDB graph with communities.
+        """
         try:
-            # 1. Ingestion (Async Generator) - Becomes SILENT
-            detector = HierarchyDetector(self.llm_service.extractor)
+            # 1. Contextual Chunking (Anthropic SOTA with prompt cache control)
+            chunker = ContextualChunker(self.llm_service.chunker)
+            chunks: List[FinalChunk] = []
 
-            line_map = LineMap(input_filename)
-
-            roles = {}
-            async for update in detector.detect_async(line_map, batch_size=20):
-                if update["type"] == "progress":
-                    continue # Silent hierarchy
-                else:
-                    roles = update["data"]
-            
-            tree_builder = DocumentTreeBuilder()
-            nodes = tree_builder.build(line_map, roles, doc_id=doc_id)
-
-            # 2. Chunking (Now Granular)
-            injector = AncestryInjector()
-            sentences = injector.inject(nodes)
-            
-            chunker = PerplexityChunker(
-                self.llm_service.chunker, 
-                max_tokens=int(os.getenv("CHUNKING_MAX_TOKENS", 100)),
-                ppl_threshold=float(os.getenv("CHUNKING_PPL_THRESHOLD", 100.0))
-            )
-
-            chunks = []
-            async for update in chunker.chunk_async(sentences):
+            async for update in chunker.chunk_async(text):
                 if isinstance(update, dict) and update.get("type") == "progress":
                     yield update
                 else:
                     chunks = update
 
-            # 3. Extraction (Async Generator)
-
+            # 2. Graph Extraction (Pydantic Schema Enforced)
             extractor = GraphExtractor(self.llm_service.extractor)
             entities, relations = [], []
-            async for update in extractor.extract_async(chunks, nodes):
+
+            async for update in extractor.extract_async(chunks, []):
                 if update["type"] == "progress":
                     yield update
                 else:
                     entities = update["entities"]
                     relations = update["relations"]
 
-            # 4. Entity Resolution & ID Mapping
+            # 3. Entity Resolution & Disambiguation
             yield self._report_progress("Resolution", 0, 1, "Resolving entities and aliases...")
             id_map = await self.resolve_entities_async(entities)
-            
-            # Update entity IDs to the resolved unique IDs
+
             for e in entities:
                 e.id = id_map.get(e.id, e.id)
-            
-            # Update relation IDs to point to the new unique IDs
             for r in relations:
                 r.source_id = id_map.get(r.source_id, r.source_id)
                 r.target_id = id_map.get(r.target_id, r.target_id)
             yield self._report_progress("Resolution", 1, 1, "Resolution complete")
 
-            # 5. Storage
-            yield self._report_progress("Storage", 0, 1, "Saving to knowledge graph...")
+            # 4. Storage in LadybugDB
+            yield self._report_progress("Storage", 0, 1, "Saving to LadybugDB graph...")
             if clear_db:
                 self.storage.clear()
             self.storage.ingest(entities, relations)
             yield self._report_progress("Storage", 1, 1, "Storage complete")
 
-            # 6. Global Community Detection (after storage so all data is persisted)
+            # 5. Global Community Detection (NetworkX Modularity)
             yield self._report_progress("Communities", 0, 1, "Detecting global knowledge communities...")
-            
-            # Fetch full graph (now includes newly ingested data)
             full_graph = self.storage.get_full_graph()
-            all_node_ids = set()
-            all_edge_tuples = []
-            
-            # Entities from storage (includes current run)
-            for n in full_graph["entities"]:
-                all_node_ids.add(n["id"])
-                
-            # Relations from storage (includes current run)
-            for r in full_graph["relations"]:
-                all_edge_tuples.append((r["source_id"], r["target_id"]))
-            
-            # Run detection
+            all_node_ids = {n["id"] for n in full_graph["entities"]}
+            all_edge_tuples = [(r["source_id"], r["target_id"]) for r in full_graph["relations"]]
+
             community_map = detect_communities(list(all_node_ids), all_edge_tuples)
-            
-            # Update storage (batch update for all nodes)
             self.storage.update_communities(community_map)
-            
             yield self._report_progress("Communities", 1, 1, "Community detection complete")
-            
+
             yield {
                 "progress": 100,
                 "status": "Ingestion complete!",
                 "type": "result",
                 "results": {
-                    "nodes_processed": len(nodes),
+                    "nodes_processed": len(chunks),
                     "chunks_created": len(chunks),
                     "entities_extracted": len(entities),
                     "relations_extracted": len(relations),
@@ -302,122 +214,12 @@ class GraphRAGPipeline:
                     "relations": [vars(r) for r in relations]
                 }
             }
-        finally:
-            if os.path.exists(input_filename):
-                try:
-                    os.remove(input_filename)
-                except Exception as e:
-                    self.logger.warning(f"Failed to remove temp file {input_filename}: {e}")
-            
-            try:
-                if os.path.exists(temp_dir) and not os.listdir(temp_dir):
-                    os.rmdir(temp_dir)
-            except Exception as e:
-                self.logger.warning(f"Failed to remove temp dir {temp_dir}: {e}")
-
-
-
-
-    async def query(self, query: str, query_type="local"):
-        # Use persistent storage
-        storage = self.storage
-        
-        # 1. Extract potential entities from query using LLM
-        prompt_extract = (
-            f"Identify the key named entities in the following query that would match nodes in a knowledge graph.\n"
-            f"Query: {query}\n"
-            f"Return the entities found."
-        )
-        try:
-            extracted_response = await self.llm_service.extractor.generate_async(prompt_extract, schema=QueryEntities)
-            if isinstance(extracted_response, dict):
-                extracted = extracted_response.get("entities", [query])
-            elif isinstance(extracted_response, str):
-                parsed = json.loads(extracted_response.replace("```json", "").replace("```", "").strip())
-                extracted = parsed.get("entities", [query]) if isinstance(parsed, dict) else parsed
-            else:
-                extracted = [query]
         except Exception as e:
-            self.logger.error(f"Entity extraction failed: {e}")
-            extracted = [query] # Fallback to query itself
+            self.logger.error(f"Ingestion failed: {e}")
+            yield {"type": "error", "detail": str(e)}
 
-        self.logger.info(f"Extracted entities for query: {extracted}")
-
-        # 2. Retrieve Context (Local Neighbors)
-        all_nodes = {} # dedupe by ID
-        all_edges = []
-        seen_edges = set()
-        
-        context_str_parts = []
-
-        for entity_id in extracted:
-            # We assume exact match for now. In prod, use vector search.
-            if query_type == "local":
-                neighbors = storage.query_local(entity_id)
-                
-                # Fetch center node details
-                center_node = storage.get_node(entity_id)
-                if not center_node:
-                    nodes_by_name = storage.get_nodes_by_name(entity_id)
-                    if nodes_by_name:
-                        center_node = nodes_by_name[0]
-                
-                if center_node:
-                    all_nodes[center_node["id"]] = center_node
-                    center_label = center_node["name"]
-                else:
-                    all_nodes[entity_id] = {"id": entity_id, "name": entity_id, "type": "QueryEntity"}
-                    center_label = entity_id
-
-                if neighbors:
-                    for row in neighbors:
-                        tgt_id, tgt_type, tgt_desc, rel_type, rel_desc, is_outgoing, tgt_name = row
-                        
-                        all_nodes[tgt_id] = {"id": tgt_id, "name": tgt_name, "type": tgt_type, "description": tgt_desc}
-                        
-                        if is_outgoing:
-                            src, tgt = center_label, tgt_name
-                            ctx_str = f"{center_label} --[{rel_type}: {rel_desc}]--> {tgt_name} ({tgt_desc})"
-                        else:
-                            src, tgt = tgt_name, center_label
-                            ctx_str = f"{tgt_name} ({tgt_desc}) --[{rel_type}: {rel_desc}]--> {center_label}"
-                            
-                        edge_norm_key = f"{src.lower()}-{rel_type}-{tgt.lower()}"
-                        
-                        if edge_norm_key not in seen_edges:
-                            seen_edges.add(edge_norm_key)
-                            
-                            all_edges.append({
-                                "source_id": center_node["id"] if is_outgoing else tgt_id,
-                                "target_id": tgt_id if is_outgoing else center_node["id"],
-                                "source_name": center_label if is_outgoing else tgt_name,
-                                "target_name": tgt_name if is_outgoing else center_label,
-                                "type": rel_type,
-                                "description": rel_desc
-                            })
-                            
-                            if ctx_str not in context_str_parts:
-                                context_str_parts.append(ctx_str)
-
-        # 3. Generate Answer
-        context_text = "\n".join(context_str_parts)
-        
-        if not context_text:
-            answer = "I couldn't find any relevant information in the knowledge graph."
-        else:
-            prompt_answer = (
-                f"You are a helpful assistant. Use the following Knowledge Graph context to answer the user's question.\n"
-                f"If the answer is not in the context, say 'I assume X but it's not in the graph'.\n\n"
-                f"Context:\n{context_text}\n\n"
-                f"Question: {query}\n"
-                f"Answer:"
-            )
-            answer = await self.llm_service.extractor.generate_async(prompt_answer)
-            if isinstance(answer, dict): 
-                answer = str(answer)
-
-        return {
-            "answer": answer,
-            "entities": [v for k,v in all_nodes.items()],
-            "relations": all_edges
-        }
+    async def query(self, query: str, query_type: str = "local"):
+        """
+        Executes query through the LangGraph Adaptive Multi-Agent Hybrid RAG engine.
+        """
+        return await self.langgraph_engine.run(query, query_type=query_type)

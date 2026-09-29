@@ -1,4 +1,7 @@
-import kuzu
+try:
+    import ladybug as kuzu
+except ImportError:
+    import kuzu
 import os
 import shutil
 import logging

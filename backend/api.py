@@ -22,10 +22,10 @@ logger = logging.getLogger("API")
 
 app = FastAPI(title="GraphRAG API")
 
-# Configure CORS (Relaxed for portfolio project)
+# Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origin_regex=r"^https?://.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -96,6 +96,12 @@ from src.llm_service import vllm_state
 
 @app.on_event("startup")
 async def startup_event():
+    use_vllm = os.getenv("USE_VLLM", "false").lower() == "true"
+    if not use_vllm:
+        vllm_state.is_ready = True
+        logger.info("Pipeline ready with Gemini 3.8-Flash ADC backend.")
+        return
+
     async def poll_vllm():
         vllm_url = os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1")
         while not vllm_state.is_ready:
@@ -164,9 +170,16 @@ def get_graph(pipeline: GraphRAGPipeline = Depends(get_pipeline)):
         raise HTTPException(status_code=500, detail=str(e))
 
 # --- Static Frontend Serving ---
-frontend_path = os.getenv("FRONTEND_PATH", os.path.join(os.path.dirname(__file__), "../frontend/static"))
+candidate_paths = [
+    os.getenv("FRONTEND_PATH", ""),
+    os.path.join(os.path.dirname(__file__), "frontend/static"),
+    os.path.join(os.path.dirname(__file__), "../frontend/static"),
+    "/app/frontend/static"
+]
+frontend_path = next((p for p in candidate_paths if p and os.path.exists(p)), None)
 
-if os.path.exists(frontend_path):
+if frontend_path:
+    logger.info(f"Serving static frontend from: {frontend_path}")
     app.mount("/static", StaticFiles(directory=frontend_path), name="static")
     
     @app.get("/")
@@ -177,4 +190,4 @@ if os.path.exists(frontend_path):
     def read_config():
         return Response(content="window.BACKEND_URL = '/api';", media_type="application/javascript")
 else:
-    logger.warning(f"Frontend path {frontend_path} not found. Static files will not be served.")
+    logger.warning("Frontend path not found. Running in API-only mode.")

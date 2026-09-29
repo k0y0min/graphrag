@@ -1,5 +1,7 @@
 # Python
 venv/
+.venv/
+backend/.venv/
 __pycache__/
 *.pyc
 .pytest_cache/
@@ -9,6 +11,7 @@ __pycache__/
 db/
 logs/
 models/
+backend/frontend/
 
 # OS
 .DS_Store

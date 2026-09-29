@@ -3,8 +3,15 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Iterator, Any, Tuple
-from typing_extensions import TypedDict
+from pydantic import BaseModel, Field
 from src.llm_service import LLMBackend
+
+class LineRole(BaseModel):
+    id: int = Field(description="The 1-based line number")
+    role: str = Field(description="The role of the line: 'Header', 'List_Item', or 'Text'")
+
+class BatchResponse(BaseModel):
+    mappings: List[LineRole]
 
 @dataclass
 class LineItem:
@@ -79,12 +86,6 @@ class HierarchyDetector:
             start_line_idx = non_empty_batch[0].id
             state = header_map.get(start_line_idx - 1, [])
             prompt = self._construct_prompt(non_empty_batch, state)
-            
-            class LineRole(TypedDict):
-                id: int
-                role: str 
-            class BatchResponse(TypedDict):
-                mappings: List[LineRole]
 
             tasks.append(self.llm.generate_async(prompt, schema=BatchResponse))
             batch_infos.append(non_empty_batch)
