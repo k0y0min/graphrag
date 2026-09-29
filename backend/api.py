@@ -91,43 +91,12 @@ class QueryRequest(BaseModel):
 
 # --- API Endpoints ---
 
-import asyncio
-from src.llm_service import vllm_state
-
-@app.on_event("startup")
-async def startup_event():
-    use_vllm = os.getenv("USE_VLLM", "false").lower() == "true"
-    if not use_vllm:
-        vllm_state.is_ready = True
-        logger.info("Pipeline ready with Gemini 3.8-Flash ADC backend.")
-        return
-
-    async def poll_vllm():
-        vllm_url = os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1")
-        while not vllm_state.is_ready:
-            try:
-                import httpx
-                async with httpx.AsyncClient() as client:
-                    res = await client.get(f"{vllm_url}/models", timeout=2.0)
-                    if res.status_code == 200:
-                        vllm_state.is_ready = True
-                        logger.info("vLLM is globally ready!")
-                        break
-            except Exception:
-                pass
-            await asyncio.sleep(5)
-            
-    asyncio.create_task(poll_vllm())
-
 @app.get("/api/health")
 async def health_check():
-    if vllm_state.is_ready:
-        return {"status": "healthy", "llm": "connected"}
-    
     return {
-        "status": "warming_up", 
-        "llm": "loading", 
-        "message": "LLM server is starting up (Model loading typically takes 2-5 mins)..."
+        "status": "healthy",
+        "engine": "gemini-3.8-flash",
+        "database": "ladybug"
     }
 
 @app.post("/api/ingest")

@@ -1,86 +1,141 @@
 <div align="center">
   <h1>GraphRAG</h1>
-  <p><em>An Advanced Graph Retrieval-Augmented Generation System</em></p>
+  <p><em>Advanced Multi-Agent Graph Retrieval-Augmented Generation with Anthropic Contextual Chunking & LadybugDB</em></p>
 
   <!-- Badges -->
   <p>
     <img alt="Python" src="https://img.shields.io/badge/Python-3.13+-blue.svg?logo=python&logoColor=white" />
     <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-005571?logo=fastapi" />
-    <img alt="KuzuDB" src="https://img.shields.io/badge/Database-KuzuDB-orange" />
-    <img alt="vLLM" src="https://img.shields.io/badge/Local_LLM-vLLM-purple" />
-    <img alt="Gemini" src="https://img.shields.io/badge/API_LLM-Gemini_3_Flash-4285F4?logo=google" />
+    <img alt="LadybugDB" src="https://img.shields.io/badge/Database-LadybugDB-orange" />
+    <img alt="LangGraph" src="https://img.shields.io/badge/Orchestration-LangGraph-darkgreen" />
+    <img alt="Gemini" src="https://img.shields.io/badge/Model-Gemini_3.8_Flash-4285F4?logo=google" />
+    <img alt="Docker" src="https://img.shields.io/badge/Deployment-Monolithic_Docker-blue?logo=docker" />
     <img alt="License" src="https://img.shields.io/badge/License-MIT-green.svg" />
   </p>
-  <!--
-  <p>
-    <img alt="Hits" src="https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fgithub.com%2Fyourusername%2Fgraphrag&count_bg=%2379C83D&title_bg=%23555555&icon=&icon_color=%23E7E7E7&title=hits&edge_flat=false"/>
-  </p>
-  -->
 </div>
 
 ---
 
 ## 📖 Overview
 
-GraphRAG is a modern, full-stack application that leverages the power of Knowledge Graphs and Large Language Models (LLMs) to ingest raw text, extract structured entities and relationships, and allow users to query their data both semantically and visually. 
+**GraphRAG** is a modern, production-grade knowledge graph and retrieval-augmented generation (RAG) platform. It transforms unstructured documents into rich, queryable knowledge graphs, detects community clusters, and uses an adaptive multi-agent supervisor to perform hybrid graph-text reasoning with self-correction.
 
+Built as a lightweight monolithic service on standard CPU infrastructure ($0 dedicated GPU cost, scales to zero on Google Cloud Run).
+
+---
 
 ### ✨ Key Features
-*   **Perplexity-Based Chunking**: Instead of arbitrarily splitting text, it uses a local model (Gemma via vLLM) to calculate sentence perplexity, splitting text dynamically at semantic boundaries (topic shifts).
-*   **Smart Entity Resolution**: Uses a combination of deterministic string similarity (`difflib`) and LLM-powered merging to prevent duplicate entities and consolidate descriptions.
-*   **Hybrid LLM Architecture**: Uses local vLLM for heavy, repetitive tasks (chunking perplexity) and Gemini (via LiteLLM) for complex reasoning (extraction and resolution).
-*   **Embedded Graph Database**: Utilizes KuzuDB for ultra-fast, local graph storage and Cypher querying.
-*   **Premium UI**: A sleek, responsive frontend featuring a Nord-inspired color palette, glassmorphism components, and interactive 3D graph visualization.
+
+*   **Anthropic Contextual Retrieval**: Instead of arbitrary token windows, documents are partitioned into semantic chunks enriched with document-level situational context using prompt cache control (`cache_control: {"type": "ephemeral"}`).
+*   **LadybugDB Embedded Graph Database**: High-performance in-process graph engine with full Cypher query support, ACID transactions, and zero external database management overhead.
+*   **LangGraph Adaptive Multi-Agent Hybrid RAG**:
+    *   **Router Agent**: Analyzes question complexity to route between structural graph traversal, vector/text retrieval, or hybrid fusion.
+    *   **Graph Engine**: Executes Cypher traversal over 1-hop and 2-hop entity neighborhoods and community clusters.
+    *   **Synthesizer Agent**: Formulates evidence-grounded answers citing specific graph entities and relations.
+    *   **Self-Correction Grader**: Validates hallucination bounds and reroutes queries if context is insufficient.
+*   **Gemini 3.8-Flash via Google Cloud ADC**: Enterprise authentication via Google Application Default Credentials (ADC) or API keys through LiteLLM.
+*   **Resilient Fallback Extractor**: Graceful heuristic entity and relationship extraction fallback ensuring graph visualization remains interactive under all network conditions.
+*   **Interactive Vis.js Graph Dashboard**: Glassmorphic UI featuring live real-time SSE ingestion progress, community color partitioning, and interactive node inspection.
 
 ---
 
 ## 🏗️ Architecture
 
-The system is designed as a monolithic API serving a static frontend, communicating with specialized LLM services.
-
 ```mermaid
 graph TD
-    subgraph Frontend [Frontend Web App]
+    subgraph Client [Browser / Dashboard]
         UI[Glassmorphism UI]
-        Vis[Interactive 3D Graph]
+        Vis[Interactive Vis.js Graph]
     end
 
-    subgraph Backend [FastAPI Backend]
-        API[API Endpoints]
-        Pipe[GraphRAG Pipeline]
-        Chunker[Perplexity Chunker]
-        Extractor[Entity Extractor]
-        Storage[KuzuDB Storage]
+    subgraph Container [Unified Monolithic FastAPI Container]
+        API[FastAPI Gateway]
+        Auth[JWT Authentication]
+        
+        subgraph Pipeline [Ingestion Pipeline]
+            Chunker[Anthropic Contextual Chunker]
+            Extractor[Pydantic Entity Extractor]
+            Resolver[Entity Resolution & Community Detection]
+        end
+        
+        subgraph LangGraph_Engine [LangGraph Multi-Agent RAG]
+            Router[Intent Router]
+            Synthesizer[Context Synthesizer]
+            Grader[Hallucination Grader]
+        end
+        
+        DB[(LadybugDB Graph Storage)]
     end
 
-    subgraph LLM_Services [LLM Services]
-        vLLM[vLLM Local Server<br/>Gemma-3-12b]
-        LiteLLM[LiteLLM Wrapper<br/>Gemini 3 Flash]
+    subgraph Cloud [Google Cloud / External]
+        Gemini[Gemini 3.8-Flash via Vertex AI ADC]
     end
 
-    UI -->|Ingest/Query Requests| API
-    API --> Pipe
-    Pipe --> Chunker
-    Pipe --> Extractor
-    Pipe --> Storage
-
-    Chunker -->|Calculate PPL| vLLM
-    Extractor -->|Extract & Resolve| LiteLLM
+    UI -->|SSE Stream / Auth / Query| API
+    API --> Auth
+    API --> Pipeline
+    API --> LangGraph_Engine
     
-    Storage -->|Return Graph| Vis
+    Chunker -->|Contextual Prompt Caching| Gemini
+    Extractor -->|Structured Extraction| Gemini
+    Pipeline --> DB
+    
+    LangGraph_Engine -->|Cypher Queries| DB
+    Router --> Gemini
+    Synthesizer --> Gemini
+    Grader --> Gemini
+    
+    DB -->|Graph Layout JSON| Vis
 ```
+
 ---
 
-## 📋 TODO:
+## 🚀 Quickstart
 
-- [X] ~~Implement user authentication & session management properly.~~ (half decent)
-- [ ] Add support for document/multimodal uploads.
-- [ ] Fine-tune perplexity spike threshold for different types of texts.
-- [ ] Add graph layout saving(freeze nodes in specific positions) and other QOL features. (import functionality from portfolio website?)
-- [ ] Checkout FalkorDB and perhaps migrate.
-- [ ] Improve entity resolution (long term).
+### Prerequisites
+* [Docker](https://docs.docker.com/engine/install/) & [Docker Compose v2](https://docs.docker.com/compose/)
+* Google Cloud ADC or a [Google AI Studio Gemini API Key](https://aistudio.google.com/app/apikey)
+
+### Running Locally
+
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/k0y0min/graphrag.git
+   cd graphrag
+   ```
+
+2. **Configure environment**:
+   ```bash
+   cp backend/.env.example backend/.env
+   # Optionally set your GEMINI_API_KEY in backend/.env if not using GCP ADC:
+   # GEMINI_API_KEY=AIzaSy...
+   ```
+
+3. **Start the monolithic service**:
+   ```bash
+   docker compose up -d --build
+   ```
+
+4. **Access the dashboard**:
+   * Open your browser at **`http://localhost:8080/`**
+   * Register a user account and begin ingesting text!
+
 ---
 
-## 📜 License Information
+## 🧪 Running Tests
+
+The test suite validates authentication, LadybugDB Cypher queries, Anthropic Contextual Chunking, community detection, and LangGraph multi-agent execution:
+
+```bash
+# Run unit tests
+pytest tests/test_graphrag.py
+
+# Run full system integration verification
+python tests/verify_full_system.py
+```
+
+---
+
+## 📜 License
 
 Licensed under the **MIT License**.

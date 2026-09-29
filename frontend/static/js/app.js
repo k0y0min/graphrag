@@ -193,32 +193,19 @@ async function checkBackendReady() {
         authOverlay.classList.remove('hidden');
     }
 
-    // Start background polling for vLLM status
-    pollBackendStatus();
+    // Verify backend connectivity
+    checkBackendHealth();
 }
 
-async function pollBackendStatus() {
-    let shownWarmingUpMessage = false;
-
-    while (true) {
-        try {
-            const res = await fetch(`${BACKEND_URL}/health`);
-            if (res.ok) {
-                const data = await res.json();
-                if (data.status === 'healthy') {
-                    console.log("Backend is fully healthy!");
-                    break; // Stop polling
-                } else if (data.status === 'warming_up') {
-                    if (!shownWarmingUpMessage) {
-                        showEphemeralToast("vLLM warming up (~5 mins). Ingestion falling back to fixed-size chunking instead of perplexity-based chunking.", 6000);
-                        shownWarmingUpMessage = true;
-                    }
-                }
-            }
-        } catch (e) {
-            console.log("Waiting for backend...");
+async function checkBackendHealth() {
+    try {
+        const res = await fetch(`${BACKEND_URL}/health`);
+        if (res.ok) {
+            const data = await res.json();
+            console.log("Backend healthy:", data);
         }
-        await new Promise(resolve => setTimeout(resolve, 5000));
+    } catch (e) {
+        console.log("Waiting for backend...");
     }
 }
 

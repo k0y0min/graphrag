@@ -7,7 +7,6 @@ from src.llm_service import LLMBackend
 from src.chunking import FinalChunk
 
 logger = logging.getLogger(__name__)
-from src.ingestion import DocumentNode
 from pydantic import BaseModel, Field
 
 # Define the exact structure we want the LLM to output

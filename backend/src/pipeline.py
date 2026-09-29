@@ -11,7 +11,7 @@ from src.chunking import ContextualChunker, FinalChunk
 from src.extraction import GraphExtractor, Entity, Relation
 from src.community import detect_communities
 from src.storage import GraphStorage
-from src.llm_service import LLMService, LiteLLMBackend, VLLMBackend
+from src.llm_service import LLMService, LiteLLMBackend
 from src.langgraph_rag import LangGraphRAGEngine
 
 class QueryEntities(BaseModel):
@@ -32,22 +32,11 @@ class GraphRAGPipeline:
         gemini_model = os.getenv("GEMINI_MODEL", "vertex_ai/gemini-3.8-flash")
         gemini_backend = LiteLLMBackend(model_name=gemini_model)
 
-        use_vllm = os.getenv("USE_VLLM", "false").lower() == "true"
-        if use_vllm:
-            vllm_url = os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1")
-            vllm_model = os.getenv("VLLM_MODEL_NAME", "unsloth/gemma-3-12b-it-FP8-Dynamic")
-            vllm_backend = VLLMBackend(model_name=vllm_model, base_url=vllm_url)
-            self.llm_service = LLMService(
-                chunking_model=vllm_backend, 
-                extraction_model=gemini_backend
-            )
-            self.logger.info(f"Initialized with vLLM ({vllm_model}) + Gemini ({gemini_model})")
-        else:
-            self.llm_service = LLMService(
-                chunking_model=gemini_backend, 
-                extraction_model=gemini_backend
-            )
-            self.logger.info(f"Initialized monolithic pipeline with Gemini 3.8 Flash ({gemini_model}) via ADC.")
+        self.llm_service = LLMService(
+            chunking_model=gemini_backend, 
+            extraction_model=gemini_backend
+        )
+        self.logger.info(f"Initialized monolithic pipeline with Gemini 3.8 Flash ({gemini_model}) via ADC.")
 
         # Initialize LangGraph Adaptive Multi-Agent Hybrid RAG engine
         self.langgraph_engine = LangGraphRAGEngine(self.storage, self.llm_service.extractor)

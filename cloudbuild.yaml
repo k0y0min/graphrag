@@ -49,7 +49,7 @@ steps:
           --execution-environment=gen2 \
           --add-volume=name=db-volume,type=cloud-storage,bucket=graphrag-db-$PROJECT_ID \
           --add-volume-mount=volume=db-volume,mount-path=/app/db \
-          --set-env-vars="USE_VLLM=false,GEMINI_MODEL=vertex_ai/gemini-3.8-flash,VERTEX_LOCATION=europe-west4,DB_PATH=/app/db/demo_db,CLEAR_DB_ON_STARTUP=false,FRONTEND_PATH=/app/frontend/static" \
+          --set-env-vars="GEMINI_MODEL=vertex_ai/gemini-3.8-flash,VERTEX_LOCATION=europe-west4,DB_PATH=/app/db/demo_db,FRONTEND_PATH=/app/frontend/static" \
           --port 8080
 
 images:

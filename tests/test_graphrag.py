@@ -11,7 +11,7 @@ if backend_dir not in sys.path:
 from src.auth import get_password_hash, verify_password, create_access_token, ALGORITHM, SECRET_KEY
 import jwt
 from src.community import detect_communities
-from src.chunking import ContextualChunker, AncestryInjector, EnrichedSentence
+from src.chunking import ContextualChunker, EnrichedSentence
 from src.extraction import Entity, Relation
 from src.storage import GraphStorage
 

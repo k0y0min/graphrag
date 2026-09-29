@@ -11,6 +11,7 @@ services:
       - graphrag_db:/app/db
       - ./backend/logs:/app/logs
       - ./frontend/static:/app/frontend/static:ro
+      - ./backend/api.py:/app/api.py
       - ./backend/src:/app/src
       - /home/ayush/.config/gcloud:/root/.config/gcloud:ro
     env_file:
@@ -18,8 +19,6 @@ services:
     environment:
       - PORT=8080
       - DB_PATH=db/demo_db
-      - CLEAR_DB_ON_STARTUP=false
-      - USE_VLLM=false
       - GEMINI_MODEL=vertex_ai/gemini-3.8-flash
       - VERTEX_LOCATION=europe-west4
       - FRONTEND_PATH=/app/frontend/static
