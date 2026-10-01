@@ -4,274 +4,527 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GraphRAG Dashboard</title>
+    <title>GraphRAG</title>
 
-    <!-- Fonts -->
+    <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 
-    <!-- Vis.js for Graph (Pinned) -->
+    <!-- Vis.js for Graph Canvas -->
     <script type="text/javascript" src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
 
-    <!-- Custom CSS -->
-    <link rel="stylesheet" href="static/css/style.css?v=3">
-
-    <style>
-        .loading-overlay {
-            position: fixed !important;
-            top: 0 !important;
-            left: 0 !important;
-            width: 100% !important;
-            height: 100% !important;
-            background: var(--bg-dark) !important;
-            display: flex !important;
-            justify-content: center !important;
-            align-items: center !important;
-            z-index: 99999 !important;
-            transition: opacity 0.5s ease, backdrop-filter 0.5s ease;
-            backdrop-filter: blur(8px);
-        }
-
-        .loading-overlay.hidden {
-            opacity: 0;
-            pointer-events: none;
-            backdrop-filter: blur(0px);
-        }
-
-        .orbital-loader {
-            position: relative;
-            width: 80px;
-            height: 80px;
-            margin-bottom: 30px;
-        }
-
-        .orbital-loader .center-node {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            width: 20px;
-            height: 20px;
-            background: var(--accent);
-            border-radius: 50%;
-            box-shadow: 0 0 15px var(--accent-glow);
-        }
-
-        .orbital-loader .orbit {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            border: 1px dashed rgba(136, 192, 208, 0.3);
-            border-radius: 50%;
-            animation: spin 4s linear infinite;
-        }
-
-        .orbital-loader .orbit-2 {
-            width: 70%;
-            height: 70%;
-            top: 15%;
-            left: 15%;
-            animation: spin 3s linear infinite reverse;
-        }
-
-        .orbital-loader .satellite {
-            position: absolute;
-            top: -6px;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 12px;
-            height: 12px;
-            background: #eceff4;
-            border-radius: 50%;
-            box-shadow: 0 0 10px rgba(255,255,255,0.5);
-        }
-
-        @keyframes spin {
-            100% { transform: rotate(360deg); }
-        }
-    </style>
-
-    <!-- Icons (Pinned) -->
+    <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@0.400.0"></script>
+
+    <!-- Marked for Markdown Rendering in Answers -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="static/css/style.css?v=7">
 </head>
 
-<body>
+<body class="bloom-mode">
+    <!-- Initial Loading Overlay -->
     <div id="loading-overlay" class="loading-overlay">
-        <div class="loading-content" style="text-align: center; color: var(--text-secondary); font-family: 'Outfit', sans-serif; display: flex; flex-direction: column; align-items: center;">
+        <div class="loading-content">
             <div class="orbital-loader">
                 <div class="center-node"></div>
                 <div class="orbit">
                     <div class="satellite"></div>
                 </div>
                 <div class="orbit orbit-2">
-                    <div class="satellite" style="background: var(--success);"></div>
+                    <div class="satellite alt-satellite"></div>
                 </div>
             </div>
-            <p style="font-size: 0.85rem; letter-spacing: 2px; text-transform: uppercase; font-weight: 600; opacity: 0.7;">Loading</p>
+            <div class="loading-brand">
+                <h2>GRAPHRAG EXPLORER</h2>
+                <p>Initializing Gemini 3.8-Flash ADC & LadybugDB Engine...</p>
+            </div>
         </div>
     </div>
 
-    <!-- Auth Overlay -->
-    <div id="auth-overlay" class="loading-overlay hidden">
-        <div class="auth-modal glass-panel" style="padding: 2rem; width: 350px; text-align: center;">
-            <div class="brand" style="justify-content: center; margin-bottom: 1.5rem;">
-                <i data-lucide="network"></i>
-                <h1>GraphRAG</h1>
+    <!-- Auth Modal Overlay -->
+    <div id="auth-overlay" class="auth-overlay hidden">
+        <div class="auth-modal glass-card">
+            <div class="auth-header">
+                <div class="brand-badge">
+                    <i data-lucide="network"></i>
+                </div>
+                <h2>GraphRAG</h2>
+                <p>Authenticate to access your private Cypher knowledge graph.</p>
             </div>
 
-            <div class="tabs" style="margin-bottom: 1.5rem;">
-                <button class="tab-btn active" id="auth-tab-login">Login</button>
-                <button class="tab-btn" id="auth-tab-register">Register</button>
+            <div class="auth-tabs">
+                <button class="auth-tab-btn active" id="auth-tab-login">Sign In</button>
+                <button class="auth-tab-btn" id="auth-tab-register">Register</button>
             </div>
 
-            <div id="auth-form" style="display: flex; flex-direction: column; gap: 1rem;">
-                <div class="search-box">
-                    <i data-lucide="user"></i>
-                    <input type="text" id="auth-username" placeholder="Username" autocomplete="username">
+            <form id="auth-form" onsubmit="return false;">
+                <div class="form-group">
+                    <label for="auth-username">Username</label>
+                    <div class="input-with-icon">
+                        <i data-lucide="user"></i>
+                        <input type="text" id="auth-username" placeholder="demo" autocomplete="username" required>
+                    </div>
                 </div>
-                <div class="search-box">
-                    <i data-lucide="key"></i>
-                    <input type="password" id="auth-password" placeholder="Password" autocomplete="current-password">
+                <div class="form-group">
+                    <label for="auth-password">Password</label>
+                    <div class="input-with-icon">
+                        <i data-lucide="key-round"></i>
+                        <input type="password" id="auth-password" placeholder="••••••••" autocomplete="current-password" required>
+                    </div>
                 </div>
 
-                <div id="auth-error" class="status-msg error" style="margin-top:0;"></div>
+                <div id="auth-error" class="form-error hidden"></div>
 
-                <button id="auth-submit-btn" class="primary-btn" style="margin-top: 0.5rem;">
-                    Sign In
+                <button id="auth-submit-btn" class="primary-btn glow-btn" type="submit">
+                    <span>Sign In</span>
+                    <i data-lucide="arrow-right"></i>
                 </button>
-            </div>
+            </form>
         </div>
     </div>
 
-    <div class="app-container">
-        <!-- Sidebar: Controls & Chat -->
-        <aside class="sidebar glass-panel">
-            <div class="brand">
-                <i data-lucide="network"></i>
-                <h1>GraphRAG</h1>
-                <a href="https://github.com/k0y0min/graphrag" target="_blank" class="github-link"
-                    title="View Source on GitHub">
-                    <i data-lucide="github"></i>
-                </a>
-                <button id="logout-btn" class="icon-btn" style="margin-left: 0.5rem; color: var(--danger);"
-                    title="Logout">
+    <!-- 100% Full-Screen Graph Canvas -->
+    <div id="network-container" class="fullscreen-network-canvas"></div>
+
+    <!-- Full-Window Drag & Drop Overlay -->
+    <div id="window-drop-overlay" class="window-drop-overlay hidden">
+        <div class="drop-modal glass-card">
+            <i data-lucide="upload-cloud" style="width: 56px; height: 56px; color: var(--accent-cyan);"></i>
+            <h3>Drop Files to Ingest</h3>
+            <p>PDF documents, Images (Vision), Audio recordings, Markdown or TXT files</p>
+        </div>
+    </div>
+
+    <!-- Top Floating Command Bar -->
+    <header class="floating-top-bar glass-pill">
+        <div class="bar-left">
+            <span class="brand-title-sm">GraphRAG</span>
+
+            <div class="pill-divider"></div>
+
+            <!-- Live Status Pills -->
+            <div class="status-indicator-group">
+                <div class="live-pill" title="Gemini 3.8-Flash ADC Active">
+                    <span class="pulse-dot"></span>
+                    <span>Gemini 3.8-Flash</span>
+                </div>
+                <div class="live-pill" title="Embedded LadybugDB Graph">
+                    <i data-lucide="database" style="width:12px;height:12px;color:var(--accent-purple);"></i>
+                    <span>LadybugDB</span>
+                </div>
+                <div class="live-pill" title="LangGraph Multi-Agent Engine">
+                    <i data-lucide="git-fork" style="width:12px;height:12px;color:var(--accent-cyan);"></i>
+                    <span>LangGraph</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="bar-center">
+            <!-- Real-time Metrics Counters -->
+            <div class="stats-badge-strip">
+                <div class="stat-badge" title="Indexed Entities">
+                    <strong id="metric-nodes">0</strong> <span>Entities</span>
+                </div>
+                <div class="stat-sep">•</div>
+                <div class="stat-badge" title="Semantic Relationships">
+                    <strong id="metric-relations">0</strong> <span>Relations</span>
+                </div>
+                <div class="stat-sep">•</div>
+                <div class="stat-badge" title="Macro-Context Horizon Chunks">
+                    <strong id="metric-chunks">0</strong> <span>Chunks</span>
+                </div>
+                <div class="stat-sep">•</div>
+                <div class="stat-badge" title="Louvain Modularity Clusters">
+                    <strong id="metric-communities">0</strong> <span>Clusters</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="bar-right">
+            <button id="inspect-deck-btn" class="pill-btn icon-only highlight-pill" title="Technical Deep Inspection (Chunks, Aliases & Traces)">
+                <i data-lucide="microscope"></i>
+            </button>
+
+            <button id="filter-toggle-btn" class="pill-btn icon-only" title="Graph Filters & Communities">
+                <i data-lucide="filter"></i>
+            </button>
+
+            <a href="https://github.com/k0y0min/graphrag" target="_blank" class="pill-btn icon-only" title="GitHub Repository">
+                <i data-lucide="github"></i>
+            </a>
+
+            <div class="pill-divider"></div>
+
+            <div class="user-session-capsule" title="Current Active Session">
+                <span class="user-avatar-badge" id="user-avatar-initial">U</span>
+                <span class="user-name-label" id="user-name-display">demo</span>
+                <button id="logout-btn" class="session-logout-btn" title="Sign Out">
                     <i data-lucide="log-out"></i>
                 </button>
             </div>
+        </div>
+    </header>
 
-            <div class="tabs">
-                <button class="tab-btn active" data-tab="ingest">Ingest</button>
-                <button class="tab-btn" data-tab="query">Query</button>
-                <button class="tab-btn" data-tab="settings">Graph</button>
+    <!-- Floating Left Sidebar Toggle (Modern AI Chat Platform Style) -->
+    <button id="sidebar-toggle-btn" class="floating-sidebar-toggle glass-pill" title="Toggle Activity History">
+        <i data-lucide="panel-left"></i>
+        <span>History</span>
+    </button>
+
+    <!-- Floating Filter Dock (Top Right) -->
+    <div id="filter-dock" class="floating-filter-dock glass-card hidden">
+        <div class="dock-header">
+            <div class="dock-title-row">
+                <i data-lucide="filter" style="width:14px;height:14px;color:var(--accent-cyan);"></i>
+                <span class="dock-title">Graph Filters & Communities</span>
+            </div>
+            <button id="close-filter-dock-btn" class="icon-btn"><i data-lucide="x"></i></button>
+        </div>
+
+        <div class="dock-content">
+            <div class="dock-field">
+                <label>Entity Type:</label>
+                <select id="filter-type" class="glass-select">
+                    <option value="all">All Entity Types</option>
+                </select>
             </div>
 
-            <div class="tab-content" id="ingest-tab">
-                <h3>Add Knowledge</h3>
-                <p class="subtitle">Paste text to build the graph.</p>
-                <textarea id="ingest-text" placeholder="SpaceX launched Starship in 2024..."></textarea>
-                <div class="actions">
-                    <button id="clear-db-btn" class="secondary-btn">
-                        <i data-lucide="trash-2"></i> Clear DB
-                    </button>
-                    <button id="ingest-btn" class="primary-btn">
-                        <i data-lucide="upload-cloud"></i> Ingest
-                    </button>
+            <!-- Ingestion Chunk Size Slider -->
+            <div class="dock-field" style="margin-top: 0.25rem;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.25rem;">
+                    <label style="font-size:0.75rem;color:var(--text-secondary);font-weight:600;">Max Chunk Size:</label>
+                    <span id="max-chunk-val" style="font-family:var(--font-mono);font-size:0.75rem;color:var(--accent-cyan);font-weight:700;">800 tok</span>
                 </div>
-                <div id="progress-container" class="progress-container hidden">
-                    <div class="progress-bar"></div>
-                </div>
-                <div id="ingest-status" class="status-msg"></div>
-            </div>
-
-            <div class="tab-content hidden" id="query-tab">
-                <h3>Ask Graph</h3>
-                <p class="subtitle">Query entities and relationships.</p>
-                <div class="search-box">
-                    <i data-lucide="search"></i>
-                    <input type="text" id="query-input" placeholder="e.g. Elon Musk">
-                </div>
-                <button id="query-btn" class="primary-btn">Run Query</button>
-
-                <div id="query-results" class="results-area">
-                    <!-- Results will appear here -->
-                    <div class="empty-state">Results will appear here...</div>
-                </div>
-            </div>
-
-            <div class="tab-content hidden" id="settings-tab">
-                <h3>Graph Controls</h3>
-                <p class="subtitle">Fine-tune the visualization.</p>
-
-                <div class="control-group">
-                    <div class="label-row">
-                        <label>Node Spacing</label>
-                        <span id="spring-length-val">100</span>
-                    </div>
-                    <input type="range" id="spring-length-range" min="50" max="800" value="100">
-                </div>
-
-                <div class="control-group">
-                    <div class="label-row">
-                        <label>Repulsion (Strength)</label>
-                        <span id="gravity-val">-2000</span>
-                    </div>
-                    <input type="range" id="gravity-range" min="-10000" max="-500" value="-2000" step="100">
-                </div>
-
-                <div class="control-group toggle-item">
-                    <span>Active Physics</span>
-                    <label class="toggle mini-toggle">
-                        <input type="checkbox" id="physics-toggle" checked>
-                        <span class="slider"></span>
-                    </label>
-                </div>
-
-                <div class="control-group toggle-item">
-                    <span>Entity Labels</span>
-                    <label class="toggle mini-toggle">
-                        <input type="checkbox" id="entity-labels-toggle" checked>
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div class="control-group toggle-item">
-                    <span>Relation Labels</span>
-                    <label class="toggle mini-toggle">
-                        <input type="checkbox" id="relation-labels-toggle" checked>
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div class="control-group toggle-item">
-                    <span>Hierarchical Layout</span>
-                    <label class="toggle mini-toggle">
-                        <input type="checkbox" id="hierarchical-toggle">
-                        <span class="slider"></span>
-                    </label>
+                <input type="range" id="max-chunk-slider" class="glass-slider" min="300" max="2500" step="50" value="800" title="Adjust ingestion chunk size (tokens)">
+                <div style="display:flex;justify-content:space-between;font-size:0.65rem;color:var(--text-muted);margin-top:2px;">
+                    <span>300 (Fine)</span>
+                    <span>2500 (Fast)</span>
                 </div>
             </div>
 
-
-
-        </aside>
-
-        <!-- Main: Graph Visualization -->
-        <main class="main-content">
-            <div id="network-container" class="glass-panel"></div>
-            <div class="overlay-controls">
-                <button class="icon-btn" id="fit-btn" title="Fit Graph"><i data-lucide="maximize"></i></button>
+            <!-- Community Clusters Filter Chips -->
+            <div class="legend-box">
+                <span class="sec-label">Community Clusters:</span>
+                <div class="legend-chips" id="community-legend-chips">
+                    <button class="cluster-chip-btn active" data-cluster="all">All</button>
+                </div>
             </div>
 
-        </main>
+            <div class="dock-actions">
+                <button id="reset-filters-btn" class="reset-scope-btn">
+                    <i data-lucide="rotate-ccw" class="reset-btn-icon"></i>
+                    <span>Reset to Global Graph</span>
+                </button>
+            </div>
+        </div>
     </div>
 
+    <!-- Canvas Navigation HUD (Bottom Right) -->
+    <div class="floating-canvas-hud glass-pill">
+        <button class="hud-btn" id="fit-graph-btn" title="Center & Fit (F)"><i data-lucide="maximize-2"></i></button>
+        <button class="hud-btn" id="zoom-in-btn" title="Zoom In (+)"><i data-lucide="zoom-in"></i></button>
+        <button class="hud-btn" id="zoom-out-btn" title="Zoom Out (-)"><i data-lucide="zoom-out"></i></button>
+        <button class="hud-btn" id="stabilize-btn" title="Stabilize"><i data-lucide="refresh-cw"></i></button>
+        <button class="hud-btn" id="physics-toggle-btn" title="Toggle Physics Engine"><i data-lucide="activity"></i></button>
+        <div class="hud-divider"></div>
+        <button class="hud-btn hud-danger-btn" id="clear-db-btn" title="Clear Database"><i data-lucide="trash-2"></i></button>
+    </div>
 
-    <!-- Dynamic Config -->
+    <!-- Slide-Over Entity Inspector Drawer (Right Side, Memgraph Lab / Bloom style) -->
+    <aside id="bloom-inspector" class="bloom-inspector-drawer glass-card hidden">
+        <div class="drawer-header">
+            <div class="drawer-badges">
+                <span class="entity-type-badge" id="insp-type">Concept</span>
+                <span class="community-badge" id="insp-comm">Cluster #0</span>
+            </div>
+            <button id="close-inspector-btn" class="icon-btn"><i data-lucide="x"></i></button>
+        </div>
+
+        <div class="drawer-body">
+            <h3 class="entity-name" id="insp-name">Entity Name</h3>
+
+            <div class="drawer-section">
+                <span class="sec-label">Synthesized Summary (Gemini 3.8-Flash):</span>
+                <p class="entity-summary" id="insp-desc">Summary description synthesized during graph extraction and alias resolution.</p>
+            </div>
+
+            <!-- Neighborhood Focus Actions -->
+            <div class="drawer-section">
+                <span class="sec-label">Neighborhood Actions:</span>
+                <div class="action-btn-row">
+                    <button id="insp-isolate-1hop-btn" class="secondary-pill-btn">
+                        <i data-lucide="crosshair"></i>
+                        <span>Isolate 1-Hop</span>
+                    </button>
+                    <button id="insp-isolate-2hop-btn" class="secondary-pill-btn">
+                        <i data-lucide="git-merge"></i>
+                        <span>Isolate 2-Hop</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Connected Neighbors -->
+            <div class="drawer-section">
+                <span class="sec-label">Connected Graph Neighbors:</span>
+                <div class="connected-neighbors-list" id="insp-neighbors">
+                    <!-- Populated dynamically on node click -->
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Floating Activity History Sidebar (Modern AI Chat Platform Style) -->
+    <aside id="history-drawer" class="floating-history-sidebar glass-card hidden">
+        <div class="drawer-header">
+            <div class="dock-title-row">
+                <i data-lucide="history" style="width:16px;height:16px;color:var(--accent-cyan);"></i>
+                <span class="dock-title">History</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:0.35rem;">
+                <button id="pin-history-sidebar-btn" class="icon-btn" title="Pin / Freeze Sidebar (Keep Visible)">
+                    <i data-lucide="pin" style="width:14px;height:14px;"></i>
+                </button>
+                <button id="close-history-drawer-btn" class="icon-btn" title="Close Sidebar">
+                    <i data-lucide="panel-left-close" style="width:15px;height:15px;"></i>
+                </button>
+            </div>
+        </div>
+
+        <div class="drawer-body">
+            <div class="drawer-section">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
+                    <span class="sec-label">Activity Timeline:</span>
+                    <button id="clear-history-btn" class="text-link-btn" title="Clear History">Clear</button>
+                </div>
+                <div class="sessions-list" id="sessions-list">
+                    <div class="empty-state">No activity recorded yet. Ingest documents or run queries to see history here.</div>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Raycast / Spotlight Floating Omni-Bar (Bottom Center) -->
+    <div class="floating-omni-container">
+        <!-- Live Reasoning Popover / Result Card (Expands smoothly above the Omni-bar) -->
+        <div id="omni-expand-card" class="omni-expand-card glass-card hidden">
+            <div class="expand-card-header">
+                <div class="expand-header-left">
+                    <span id="expand-mode-badge" class="route-pill">🔍 Multi-Hop Hybrid Retrieval</span>
+                    <span id="expand-grounded-badge" class="grounding-badge"><i data-lucide="shield-check"></i> Grounded</span>
+                </div>
+                <div class="expand-header-right">
+                    <span class="expand-timer" id="pipeline-timer">0.0s</span>
+                    <button id="minimize-expand-card-btn" class="icon-btn" title="Minimize Progress"><i data-lucide="minus"></i></button>
+                    <button id="close-expand-card-btn" class="icon-btn" title="Close"><i data-lucide="x"></i></button>
+                </div>
+            </div>
+
+            <!-- Live Stepper Stages (Paced Humane Animation) -->
+            <div class="pipeline-stepper-strip" id="pipeline-stepper-strip">
+                <!-- Dynamically populated steps -->
+            </div>
+
+            <div class="expand-status-line" id="pipeline-status-text">Processing...</div>
+
+            <!-- Query Answer / Ingestion Summary Content Area -->
+            <div id="omni-answer-content" class="omni-answer-content">
+                <!-- Markdown rendered answer or ingestion stats -->
+            </div>
+        </div>
+
+        <!-- Ephemeral Attachments Strip (Situated above the bar) -->
+        <div id="omni-attachments-strip" class="omni-attachments-strip hidden">
+            <!-- Dynamically populated chips with remove buttons -->
+        </div>
+
+        <!-- The Omni-Input Bar -->
+        <div class="omni-bar glass-pill" id="omni-bar">
+            <!-- Mode Switcher Pill -->
+            <div class="omni-mode-pill">
+                <button class="mode-toggle-btn active" id="omni-mode-query" title="Query Mode: Natural Language RAG">
+                    <i data-lucide="sparkles"></i>
+                    <span>Ask</span>
+                </button>
+                <button class="mode-toggle-btn" id="omni-mode-ingest" title="Ingest Mode: Feed Knowledge">
+                    <i data-lucide="upload-cloud"></i>
+                    <span>Ingest</span>
+                </button>
+            </div>
+
+            <!-- File Attachment Button with 0-delay Tooltip -->
+            <input type="file" id="omni-file-input" accept=".pdf,.png,.jpg,.jpeg,.webp,.txt,.md,.json,.csv,.mp3,.wav,.m4a,.ogg,.flac" hidden>
+            <div class="instant-tooltip-container">
+                <button id="omni-attach-btn" class="omni-icon-action" type="button">
+                    <i data-lucide="paperclip"></i>
+                </button>
+                <div class="instant-tooltip">Supported formats: PDF, Images (PNG/JPG), Audio (MP3/WAV/M4A), Markdown, TXT</div>
+            </div>
+
+            <!-- Main Input Field -->
+            <div class="omni-input-wrapper">
+                <input type="text" id="omni-main-input" placeholder="Ask a question..." autocomplete="off">
+            </div>
+
+            <!-- Sample Showcase Selector -->
+            <div class="omni-preset-dropdown">
+                <button id="omni-samples-btn" class="omni-preset-btn" title="Quick Technical Showcases">
+                    <i data-lucide="layers"></i>
+                    <span>Samples</span>
+                </button>
+                <div class="samples-menu glass-card hidden" id="samples-menu">
+                    <button class="sample-item" data-sample="starship">
+                        <i data-lucide="rocket"></i>
+                        <div>
+                            <strong>SpaceX Starship</strong>
+                            <small>Booster, hot-staging, Raptor engines</small>
+                        </div>
+                    </button>
+                    <button class="sample-item" data-sample="apollo">
+                        <i data-lucide="moon"></i>
+                        <div>
+                            <strong>Apollo 11 Mission</strong>
+                            <small>Saturn V, lunar module, Sea of Tranquility</small>
+                        </div>
+                    </button>
+                    <button class="sample-item" data-sample="ai-agents">
+                        <i data-lucide="cpu"></i>
+                        <div>
+                            <strong>Agentic AI & GraphRAG</strong>
+                            <small>LangGraph, LadybugDB, Horizon chunks</small>
+                        </div>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Submit Button -->
+            <button id="omni-submit-btn" class="omni-send-btn glow-btn" title="Execute (Enter)">
+                <i data-lucide="arrow-up"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- DEEP DIVE INSPECTION MODAL -->
+    <div id="deep-inspection-modal" class="inspection-modal-overlay hidden">
+        <div class="inspection-modal glass-card">
+            <div class="modal-header">
+                <div class="modal-title-group">
+                    <div class="modal-icon"><i data-lucide="binary"></i></div>
+                    <div>
+                        <h2>Technical Deep Inspection</h2>
+                        <p>Inspect macro-context horizon chunks, alias disambiguation records, LangGraph traces & live Cypher state.</p>
+                    </div>
+                </div>
+                <button id="close-inspection-modal-btn" class="icon-btn close-modal-btn" title="Close"><i data-lucide="x"></i></button>
+            </div>
+
+            <!-- Modal Tab Bar -->
+            <div class="modal-tabs">
+                <button class="modal-tab-btn active" data-modal-tab="chunks">
+                    <i data-lucide="layers"></i>
+                    <span>Contextual Chunks</span>
+                </button>
+                <button class="modal-tab-btn" data-modal-tab="aliases">
+                    <i data-lucide="split"></i>
+                    <span>Aliases & Homonym Disambiguation</span>
+                </button>
+                <button class="modal-tab-btn" data-modal-tab="langgraph">
+                    <i data-lucide="git-branch"></i>
+                    <span>LangGraph RAG Trace</span>
+                </button>
+                <button class="modal-tab-btn" data-modal-tab="cypher">
+                    <i data-lucide="terminal"></i>
+                    <span>Interactive Cypher Console</span>
+                </button>
+            </div>
+
+            <!-- Modal Content Panes -->
+            <div class="modal-content-area">
+                <!-- PANE 1: CONTEXTUAL CHUNKS -->
+                <div class="modal-pane active" id="modal-pane-chunks">
+                    <div class="pane-description">
+                        <p><strong>Macro-Context Horizon Architecture:</strong> Chunks are partitioned into 400–600 token extraction targets bounded by continuous 35,000 token preceding context and 1,500 token forward lookahead. Inspect how target chunks retain narrative continuity to eliminate pronoun ambiguity and lost context.</p>
+                    </div>
+                    <div class="chunks-grid" id="chunks-grid">
+                        <div class="empty-state">No chunks ingested yet. Drop a document or select a sample dataset.</div>
+                    </div>
+                </div>
+
+                <!-- PANE 2: ALIASES & HOMONYM DISAMBIGUATION -->
+                <div class="modal-pane" id="modal-pane-aliases">
+                    <div class="pane-description">
+                        <p><strong>Entity Identity Resolution:</strong> Variant entity mentions (acronyms, synonyms, partial names) are clustered, cross-referenced with existing LadybugDB nodes, and evaluated via LLM discriminator to separate homonyms and merge descriptions.</p>
+                    </div>
+                    <div class="table-container">
+                        <table class="modern-table">
+                            <thead>
+                                <tr>
+                                    <th>Canonical Name</th>
+                                    <th>Aliases & Variations</th>
+                                    <th>Type</th>
+                                    <th>Status</th>
+                                    <th>Synthesized Description</th>
+                                </tr>
+                            </thead>
+                            <tbody id="aliases-table-body">
+                                <tr>
+                                    <td colspan="5" class="text-center empty-state">No entity resolution records available.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- PANE 3: LANGGRAPH RAG TRACE -->
+                <div class="modal-pane" id="modal-pane-langgraph">
+                    <div class="pane-description">
+                        <p><strong>LangGraph Multi-Agent RAG Trace:</strong> Step-by-step trace of deterministic hybrid execution: query entity identification, multi-hop Cypher property graph paths in LadybugDB, and factual grounding verification.</p>
+                    </div>
+                    <div id="langgraph-trace-content">
+                        <div class="empty-state">Ask a question using the omni-bar to inspect its LangGraph execution trace.</div>
+                    </div>
+                </div>
+
+                <!-- PANE 4: CYPHER CONSOLE -->
+                <div class="modal-pane" id="modal-pane-cypher">
+                    <div class="pane-description">
+                        <p><strong>Live LadybugDB Cypher Terminal:</strong> Run arbitrary Cypher read queries against the embedded LadybugDB graph database.</p>
+                    </div>
+                    <div class="cypher-console-wrapper">
+                        <div class="cypher-input-row">
+                            <span class="cypher-prompt-symbol">kuzu&gt;</span>
+                            <input type="text" id="cypher-query-input" value="MATCH (a:Entity)-[r:Related]->(b:Entity) RETURN a.name, r.rel_type, b.name LIMIT 15">
+                            <button id="run-cypher-btn" class="primary-btn">
+                                <i data-lucide="play"></i>
+                                <span>Execute</span>
+                            </button>
+                        </div>
+                        <div class="cypher-presets">
+                            <span class="preset-label">Sample Cypher:</span>
+                            <button class="cypher-preset-btn" data-cypher="MATCH (a:Entity) RETURN a.name, a.type, a.community_id LIMIT 20">List Entities</button>
+                            <button class="cypher-preset-btn" data-cypher="MATCH (c:Chunk) RETURN c.id, c.context LIMIT 10">List Context Chunks</button>
+                            <button class="cypher-preset-btn" data-cypher="MATCH (a:Entity) RETURN a.community_id, count(a) ORDER BY count(a) DESC">Community Sizes</button>
+                        </div>
+                        <div class="cypher-results-table-container" id="cypher-results-container">
+                            <div class="empty-state">Click Execute to run Cypher query on LadybugDB.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Ephemeral Toast Notification -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <!-- Scripts -->
     <script src="config.js"></script>
-    <script src="static/js/app.js?v=5"></script>
+    <script src="static/js/app.js?v=7"></script>
     <script>
         lucide.createIcons();
     </script>
 </body>
+
 </html>

@@ -43,7 +43,9 @@ steps:
           --image europe-west4-docker.pkg.dev/$PROJECT_ID/graphrag/app:$COMMIT_SHA \
           --region europe-west4 \
           --cpu 1 \
-          --memory 1Gi \
+          --memory 2Gi \
+          --timeout 600s \
+          --concurrency 40 \
           --allow-unauthenticated \
           --no-cpu-throttling \
           --execution-environment=gen2 \

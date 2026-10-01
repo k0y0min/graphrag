@@ -1,35 +1,50 @@
+import os
+import re
 from typing import List, Dict, Any, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from src.llm_service import LLMBackend
 
 @dataclass
 class EnrichedSentence:
     text: str
-    context: str # e.g. "Header 1 > Header 2"
-    original_id: str
+    context: str = ""
+    original_id: str = ""
 
 @dataclass
 class FinalChunk:
     id: str
-    text: str
-    context: str
-    start_char_idx: int
-    end_char_idx: int
-    sentences: List[EnrichedSentence]
+    text: str                     # Target extraction chunk (400-600 tokens)
+    context: str = ""             # Short label/excerpt
+    preceding_context: str = ""   # Up to 35,000 tokens of preceding document text
+    forward_lookahead: str = ""   # Up to 1,500 tokens of forward document text
+    start_char_idx: int = 0
+    end_char_idx: int = 0
+    sentences: List[EnrichedSentence] = field(default_factory=list)
 
 
 class ContextualChunker:
     """
-    Implements Anthropic's Contextual Retrieval (Sept 2024 SOTA).
-    Splits text into coherent chunks and enriches each chunk with a
-    succinct document-level situational context using prompt cache control.
+    Macro-Context Horizon Chunker.
+    Partitions documents into coherent 400-600 token target chunks,
+    preserving continuous chronological preceding context (up to 35,000 tokens)
+    and forward lookahead horizon (up to 1,500 tokens) for zero-loss extraction.
     """
-    def __init__(self, llm: LLMBackend, target_chunk_tokens: int = 350, max_chunk_tokens: int = 500):
+    def __init__(
+        self,
+        llm: Optional[LLMBackend] = None,
+        target_chunk_tokens: int = 500,
+        max_chunk_tokens: int = 650,
+        lookback_tokens: int = 35000,
+        lookahead_tokens: int = 1500
+    ):
         self.llm = llm
-        self.target_chunk_tokens = target_chunk_tokens
-        self.max_chunk_tokens = max_chunk_tokens
-        import tiktoken
+        self.target_chunk_tokens = int(os.getenv("TARGET_CHUNK_TOKENS", str(target_chunk_tokens)))
+        self.max_chunk_tokens = int(os.getenv("MAX_CHUNK_TOKENS", str(max_chunk_tokens)))
+        self.lookback_tokens = int(os.getenv("HORIZON_LOOKBACK_TOKENS", str(lookback_tokens)))
+        self.lookahead_tokens = int(os.getenv("HORIZON_LOOKAHEAD_TOKENS", str(lookahead_tokens)))
+
         try:
+            import tiktoken
             self.tokenizer = tiktoken.get_encoding("cl100k_base")
         except Exception:
             self.tokenizer = None
@@ -38,6 +53,30 @@ class ContextualChunker:
         if self.tokenizer:
             return len(self.tokenizer.encode(text))
         return len(text.split())
+
+    def _slice_tokens_from_end(self, text: str, max_tokens: int) -> str:
+        """Returns at most max_tokens from the end of the text string."""
+        if not text:
+            return ""
+        if self._count_tokens(text) <= max_tokens:
+            return text
+        if self.tokenizer:
+            tokens = self.tokenizer.encode(text)
+            return self.tokenizer.decode(tokens[-max_tokens:])
+        words = text.split()
+        return " ".join(words[-max_tokens:])
+
+    def _slice_tokens_from_start(self, text: str, max_tokens: int) -> str:
+        """Returns at most max_tokens from the start of the text string."""
+        if not text:
+            return ""
+        if self._count_tokens(text) <= max_tokens:
+            return text
+        if self.tokenizer:
+            tokens = self.tokenizer.encode(text)
+            return self.tokenizer.decode(tokens[:max_tokens])
+        words = text.split()
+        return " ".join(words[:max_tokens])
 
     def _split_into_base_chunks(self, text: str) -> List[str]:
         """Splits text into chunks respecting paragraph and sentence boundaries."""
@@ -70,7 +109,12 @@ class ContextualChunker:
                 try:
                     sents = nltk.sent_tokenize(chunk)
                 except LookupError:
-                    sents = chunk.split(". ")
+                    nltk.download('punkt', quiet=True)
+                    nltk.download('punkt_tab', quiet=True)
+                    try:
+                        sents = nltk.sent_tokenize(chunk)
+                    except Exception:
+                        sents = chunk.split(". ")
                 
                 sub_chunk = []
                 sub_tokens = 0
@@ -92,80 +136,62 @@ class ContextualChunker:
 
     async def chunk_async(self, full_text: str):
         """
-        Async generator that splits the document and enriches chunks in parallel
-        using Anthropic's Contextual Retrieval prompt with explicit cache_control.
+        Async generator that splits the document into target chunks (400-600 tokens)
+        and attaches the surrounding preceding context (up to 35,000 tokens)
+        and forward lookahead horizon (up to 1,500 tokens) without costly separate LLM calls.
         """
-        base_chunks = self._split_into_base_chunks(full_text)
-        total = len(base_chunks)
+        base_chunk_texts = self._split_into_base_chunks(full_text)
+        total = len(base_chunk_texts)
 
         yield {
             "type": "progress",
-            "stage": "Contextual Retrieval",
+            "stage": "Horizon Chunking",
             "current": 0,
             "total": total,
-            "status": f"Created {total} base chunks. Initiating Anthropic contextual enrichment..."
+            "status": f"Partitioned document into {total} target chunks. Slicing macro-context horizons..."
         }
 
-        import asyncio
-        semaphore = asyncio.Semaphore(8)
+        final_chunks: List[FinalChunk] = []
+        search_cursor = 0
 
-        async def _enrich_chunk(idx: int, chunk_content: str):
-            async with semaphore:
-                prompt_messages = [
-                    {
-                        "role": "user",
-                        "content": f"<document>\n{full_text}\n</document>",
-                        "cache_control": {"type": "ephemeral"}
-                    },
-                    {
-                        "role": "user",
-                        "content": (
-                            f"Here is the chunk we want to situate within the whole document:\n"
-                            f"<chunk>\n{chunk_content}\n</chunk>\n"
-                            f"Please give a short succinct context (1-2 sentences, max 50 words) to situate this chunk within the overall document to improve search retrieval of the chunk. Answer only with the succinct context and nothing else."
-                        )
-                    }
-                ]
-                try:
-                    context = await self.llm.generate_async(prompt_messages)
-                    if isinstance(context, dict):
-                        context = str(context)
-                    context = context.strip()
-                except Exception as e:
-                    context = ""
+        for i, chunk_text in enumerate(base_chunk_texts):
+            # Locate chunk character offsets in full text
+            start_idx = full_text.find(chunk_text, search_cursor)
+            if start_idx == -1:
+                start_idx = full_text.find(chunk_text)
+            if start_idx == -1:
+                start_idx = search_cursor
+            end_idx = start_idx + len(chunk_text)
+            search_cursor = end_idx
 
-                return idx, context, chunk_content
+            # Extract raw preceding and forward string slices
+            raw_preceding = full_text[:start_idx].strip()
+            raw_forward = full_text[end_idx:].strip()
 
-        tasks = [asyncio.ensure_future(_enrich_chunk(i, c)) for i, c in enumerate(base_chunks)]
-        enriched_results = [None] * total
-        completed = 0
+            # Bound them strictly by token limits
+            preceding_context = self._slice_tokens_from_end(raw_preceding, self.lookback_tokens)
+            forward_lookahead = self._slice_tokens_from_start(raw_forward, self.lookahead_tokens)
 
-        for future in asyncio.as_completed(tasks):
-            idx, context, content = await future
-            enriched_results[idx] = (context, content)
-            completed += 1
-            yield {
-                "type": "progress",
-                "stage": "Contextual Retrieval",
-                "current": completed,
-                "total": total,
-                "status": f"Enriched {completed}/{total} chunks with document context"
-            }
+            final_chunks.append(FinalChunk(
+                id=f"chunk_{i+1}",
+                text=chunk_text,
+                context=f"Chunk {i+1}/{total}",
+                preceding_context=preceding_context,
+                forward_lookahead=forward_lookahead,
+                start_char_idx=start_idx,
+                end_char_idx=end_idx,
+                sentences=[EnrichedSentence(text=chunk_text, context="", original_id=f"chunk_{i+1}")]
+            ))
 
-        final_chunks = []
-        for i, res in enumerate(enriched_results):
-            if res:
-                ctx, raw_text = res
-                enriched_text = f"Context: {ctx}\n\n{raw_text}" if ctx else raw_text
-                final_chunks.append(FinalChunk(
-                    id=f"chunk_{i+1}",
-                    text=enriched_text,
-                    context=ctx,
-                    start_char_idx=0,
-                    end_char_idx=0,
-                    sentences=[EnrichedSentence(text=raw_text, context=ctx, original_id=f"chunk_{i+1}")]
-                ))
+        yield {
+            "type": "progress",
+            "stage": "Horizon Chunking",
+            "current": total,
+            "total": total,
+            "status": f"Generated {total} chunks with 35k preceding & 1.5k forward macro-context horizons"
+        }
 
         yield final_chunks
 
-
+# Backwards compatibility alias
+HorizonChunker = ContextualChunker

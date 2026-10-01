@@ -18,7 +18,7 @@ class LLMBackend(ABC):
 
 class LiteLLMBackend(LLMBackend):
     """
-    Backend for connecting to Gemini 3.8-Flash via Vertex AI ADC or GEMINI_API_KEY.
+    Backend for connecting to Gemini via Vertex AI ADC or GEMINI_API_KEY.
     Supports Anthropic-style cache_control for Gemini context caching.
     """
     def __init__(self, model_name: Optional[str] = None):
@@ -51,89 +51,132 @@ class LiteLLMBackend(LLMBackend):
         if vertex_project:
             os.environ.setdefault("VERTEX_PROJECT", vertex_project)
             os.environ.setdefault("GOOGLE_CLOUD_PROJECT", vertex_project)
+        self.vertex_project = vertex_project
+
         vertex_location = os.getenv("VERTEX_LOCATION", "europe-west4")
         if vertex_location:
             os.environ.setdefault("VERTEX_LOCATION", vertex_location)
+        self.vertex_location = vertex_location
+        self.active_model: Optional[str] = None
+
+    def _prepare_call(self, prompt: str | List[Dict[str, Any]], schema: Optional[Any] = None, temperature: Optional[float] = None):
+        kwargs: Dict[str, Any] = {}
+        if self.api_key:
+            kwargs["api_key"] = self.api_key
+        else:
+            if self.vertex_location:
+                kwargs["vertex_location"] = self.vertex_location
+            if self.vertex_project:
+                kwargs["vertex_project"] = self.vertex_project
+
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+            
+        if schema and hasattr(schema, "model_json_schema"):
+            kwargs["response_format"] = schema
+            
+        messages = prompt if isinstance(prompt, list) else [{"role": "user", "content": prompt}]
+        return messages, kwargs
 
     def generate(self, prompt: str | List[Dict[str, Any]], schema: Optional[Any] = None, temperature: Optional[float] = None) -> str | Dict[str, Any]:
         import litellm
-        kwargs = {}
-        if self.api_key:
-            kwargs["api_key"] = self.api_key
-        if temperature is not None:
-            kwargs["temperature"] = temperature
+        messages, kwargs = self._prepare_call(prompt, schema, temperature)
             
-        if schema and hasattr(schema, "model_json_schema"):
-            kwargs["response_format"] = schema
-            
-        messages = prompt if isinstance(prompt, list) else [{"role": "user", "content": prompt}]
-            
-        try:
-            response = litellm.completion(
-                model=self.model_name,
-                messages=messages,
-                **kwargs
-            )
-            content = response.choices[0].message.content
-            if schema:
-                try:
-                    clean_content = content.replace("```json", "").replace("```", "").strip()
-                    return json.loads(clean_content)
-                except json.JSONDecodeError:
-                    logger.error("LiteLLM failed to return valid JSON.")
-            return content
-        except Exception as e:
-            err_str = str(e)
-            if "ACCESS_TOKEN_SCOPE_INSUFFICIENT" in err_str or "403" in err_str:
-                logger.error(
-                    "GCE VM service account has restricted OAuth scopes. "
-                    "To enable live Gemini extraction, please add GEMINI_API_KEY=your_key to backend/.env "
-                    "or authenticate via 'gcloud auth application-default login --no-browser'."
+        if self.active_model:
+            candidate_models = [self.active_model]
+        else:
+            candidate_models = [self.model_name]
+            if "3.8-flash" in self.model_name:
+                provider = "vertex_ai/" if self.model_name.startswith("vertex_ai/") else "gemini/"
+                candidate_models.append(f"{provider}gemini-2.5-flash")
+                candidate_models.append(f"{provider}gemini-2.0-flash")
+
+        last_error = None
+        for model in candidate_models:
+            try:
+                response = litellm.completion(
+                    model=model,
+                    messages=messages,
+                    **kwargs
                 )
-            else:
-                logger.error(f"LiteLLM generate failed: {e}")
-            if schema: return {}
-            return ""
+                self.active_model = model
+                content = response.choices[0].message.content
+                if schema:
+                    try:
+                        clean_content = content.replace("```json", "").replace("```", "").strip()
+                        return json.loads(clean_content)
+                    except json.JSONDecodeError:
+                        logger.error("LiteLLM failed to return valid JSON.")
+                return content
+            except Exception as e:
+                last_error = e
+                err_str = str(e)
+                if ("404" in err_str or "NOT_FOUND" in err_str) and len(candidate_models) > 1:
+                    logger.debug(f"Model {model} returned 404. Falling back to alternative model...")
+                    continue
+                break
+
+        err_str = str(last_error) if last_error else ""
+        if "ACCESS_TOKEN_SCOPE_INSUFFICIENT" in err_str or "403" in err_str:
+            logger.error(
+                "GCE VM service account has restricted OAuth scopes. "
+                "To enable live Gemini extraction, please add GEMINI_API_KEY=your_key to backend/.env "
+                "or authenticate via 'gcloud auth application-default login --no-browser'."
+            )
+        else:
+            logger.error(f"LiteLLM generate failed: {last_error}")
+        if schema: return {}
+        return ""
 
     async def generate_async(self, prompt: str | List[Dict[str, Any]], schema: Optional[Any] = None, temperature: Optional[float] = None) -> str | Dict[str, Any]:
         import litellm
-        kwargs = {}
-        if self.api_key:
-            kwargs["api_key"] = self.api_key
-        if temperature is not None:
-            kwargs["temperature"] = temperature
+        messages, kwargs = self._prepare_call(prompt, schema, temperature)
             
-        if schema and hasattr(schema, "model_json_schema"):
-            kwargs["response_format"] = schema
-            
-        messages = prompt if isinstance(prompt, list) else [{"role": "user", "content": prompt}]
-            
-        try:
-            response = await litellm.acompletion(
-                model=self.model_name,
-                messages=messages,
-                **kwargs
-            )
-            content = response.choices[0].message.content
-            if schema:
-                try:
-                    clean_content = content.replace("```json", "").replace("```", "").strip()
-                    return json.loads(clean_content)
-                except json.JSONDecodeError:
-                    logger.error("LiteLLM failed to return valid JSON.")
-            return content
-        except Exception as e:
-            err_str = str(e)
-            if "ACCESS_TOKEN_SCOPE_INSUFFICIENT" in err_str or "403" in err_str:
-                logger.error(
-                    "GCE VM service account has restricted OAuth scopes. "
-                    "To enable live Gemini extraction, please add GEMINI_API_KEY=your_key to backend/.env "
-                    "or authenticate via 'gcloud auth application-default login --no-browser'."
+        if self.active_model:
+            candidate_models = [self.active_model]
+        else:
+            candidate_models = [self.model_name]
+            if "3.8-flash" in self.model_name:
+                provider = "vertex_ai/" if self.model_name.startswith("vertex_ai/") else "gemini/"
+                candidate_models.append(f"{provider}gemini-2.5-flash")
+                candidate_models.append(f"{provider}gemini-2.0-flash")
+
+        last_error = None
+        for model in candidate_models:
+            try:
+                response = await litellm.acompletion(
+                    model=model,
+                    messages=messages,
+                    **kwargs
                 )
-            else:
-                logger.error(f"LiteLLM generate_async failed: {e}")
-            if schema: return {}
-            return ""
+                self.active_model = model
+                content = response.choices[0].message.content
+                if schema:
+                    try:
+                        clean_content = content.replace("```json", "").replace("```", "").strip()
+                        return json.loads(clean_content)
+                    except json.JSONDecodeError:
+                        logger.error("LiteLLM failed to return valid JSON.")
+                return content
+            except Exception as e:
+                last_error = e
+                err_str = str(e)
+                if ("404" in err_str or "NOT_FOUND" in err_str) and len(candidate_models) > 1:
+                    logger.debug(f"Model {model} returned 404. Falling back to alternative model...")
+                    continue
+                break
+
+        err_str = str(last_error) if last_error else ""
+        if "ACCESS_TOKEN_SCOPE_INSUFFICIENT" in err_str or "403" in err_str:
+            logger.error(
+                "GCE VM service account has restricted OAuth scopes. "
+                "To enable live Gemini extraction, please add GEMINI_API_KEY=your_key to backend/.env "
+                "or authenticate via 'gcloud auth application-default login --no-browser'."
+            )
+        else:
+            logger.error(f"LiteLLM generate_async failed: {last_error}")
+        if schema: return {}
+        return ""
 
 
 class LLMService:
@@ -144,7 +187,7 @@ class LLMService:
     @property
     def chunker(self) -> LLMBackend:
         return self.chunking_model
-        
+
     @property
     def extractor(self) -> LLMBackend:
         return self.extraction_model

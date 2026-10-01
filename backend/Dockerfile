@@ -17,10 +17,11 @@ ENV PATH="/root/.local/bin:${PATH}"
 COPY pyproject.toml uv.lock ./
 
 # Sync dependencies using uv
-RUN uv sync
+RUN uv sync --frozen --no-cache
 
 # Pre-download NLTK tokenizers so runtime never hits network errors
-RUN uv run python -m nltk.downloader punkt punkt_tab
+ENV NLTK_DATA=/usr/share/nltk_data
+RUN uv run python -m nltk.downloader -d /usr/share/nltk_data punkt punkt_tab
 
 # Copy the application code (including frontend/static)
 COPY . .

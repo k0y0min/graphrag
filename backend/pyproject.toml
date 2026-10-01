@@ -25,4 +25,5 @@ dependencies = [
     "uvicorn>=0.46.0",
     "google-auth>=2.0.0",
     "google-cloud-aiplatform>=2.2.0",
+    "pypdf>=5.0.0",
 ]

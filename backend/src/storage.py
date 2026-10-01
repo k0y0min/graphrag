@@ -49,16 +49,34 @@ class GraphStorage:
 
     def clear(self):
         """
-        Wipes the entire graph by dropping all tables.
-        This is a 'full reset' that ensures a clean slate.
+        Wipes the entire graph cleanly without dropping tables to preserve
+        Kùzu's internal table catalog entry IDs across connections.
         """
-        tables = ["Related", "ParentOf", "Entity"]
-        for table in tables:
-            try:
-                self.conn.execute(f"DROP TABLE {table}")
-            except Exception as e:
-                # Table might not exist, which is fine during reset
-                logger.debug(f"Table {table} did not exist to drop or failed: {e}")
+        try:
+            self.conn.execute("MATCH (a:Entity)-[r:Related]->(b:Entity) DELETE r")
+        except Exception as e:
+            logger.debug(f"Clear Related: {e}")
+
+        try:
+            self.conn.execute("MATCH (a:Entity)-[r:ParentOf]->(b:Entity) DELETE r")
+        except Exception as e:
+            logger.debug(f"Clear ParentOf: {e}")
+
+        try:
+            self.conn.execute("MATCH (c:Chunk)-[r:Mentions]->(e:Entity) DELETE r")
+        except Exception as e:
+            logger.debug(f"Clear Mentions: {e}")
+
+        try:
+            self.conn.execute("MATCH (e:Entity) DELETE e")
+        except Exception as e:
+            logger.debug(f"Clear Entity: {e}")
+
+        try:
+            self.conn.execute("MATCH (c:Chunk) DELETE c")
+        except Exception as e:
+            logger.debug(f"Clear Chunk: {e}")
+
         self._init_schema()
 
     def _init_schema(self):
@@ -69,6 +87,14 @@ class GraphStorage:
                 logger.error(f"Init Entity error: {e}")
             else:
                 logger.debug("Entity table already exists.")
+
+        try:
+            self.conn.execute("CREATE NODE TABLE Chunk(id STRING, text STRING, context STRING, PRIMARY KEY (id))")
+        except RuntimeError as e:
+            if "already exists" not in str(e).lower():
+                logger.error(f"Init Chunk error: {e}")
+            else:
+                logger.debug("Chunk table already exists.")
 
         try:
             # Semantic relation
@@ -87,6 +113,14 @@ class GraphStorage:
                 logger.error(f"Init ParentOf error: {e}")
             else:
                 logger.debug("ParentOf table already exists.")
+
+        try:
+            self.conn.execute("CREATE REL TABLE Mentions(FROM Chunk TO Entity)")
+        except RuntimeError as e:
+            if "already exists" not in str(e).lower():
+                logger.error(f"Init Mentions error: {e}")
+            else:
+                logger.debug("Mentions table already exists.")
 
     def ingest(self, entities: List[Entity], relations: List[Relation]):
         # Use simple transaction-like behavior by executing in a loop
@@ -110,18 +144,104 @@ class GraphStorage:
 
         # 2. Ingest Relations
         for rel in relations:
-            if rel.type == "PARENT_OF":
-                query = "MATCH (a:Entity {id: $p_src}), (b:Entity {id: $p_tgt}) MERGE (a)-[:ParentOf]->(b)"
-                self.conn.execute(query, {"p_src": rel.source_id, "p_tgt": rel.target_id})
-            else:
-                # Semantic "Related"
-                query = "MATCH (a:Entity {id: $p_src}), (b:Entity {id: $p_tgt}) MERGE (a)-[r:Related {rel_type: $p_type}]->(b) SET r.description = $p_desc"
-                self.conn.execute(query, {
-                    "p_src": rel.source_id,
-                    "p_tgt": rel.target_id,
-                    "p_type": rel.type,
-                    "p_desc": rel.description
+            try:
+                if rel.type == "PARENT_OF":
+                    query = """
+                    MATCH (a:Entity), (b:Entity) 
+                    WHERE (a.id = $p_src OR toLower(a.name) = toLower($p_src)) 
+                      AND (b.id = $p_tgt OR toLower(b.name) = toLower($p_tgt))
+                    MERGE (a)-[:ParentOf]->(b)
+                    """
+                    self.conn.execute(query, {"p_src": rel.source_id, "p_tgt": rel.target_id})
+                else:
+                    query = """
+                    MATCH (a:Entity), (b:Entity) 
+                    WHERE (a.id = $p_src OR toLower(a.name) = toLower($p_src)) 
+                      AND (b.id = $p_tgt OR toLower(b.name) = toLower($p_tgt))
+                    MERGE (a)-[r:Related {rel_type: $p_type}]->(b) 
+                    SET r.description = $p_desc
+                    """
+                    self.conn.execute(query, {
+                        "p_src": rel.source_id,
+                        "p_tgt": rel.target_id,
+                        "p_type": rel.type or "ASSOCIATED_WITH",
+                        "p_desc": rel.description or ""
+                    })
+            except Exception as e:
+                logger.error(f"Failed to ingest relation ({rel.source_id} -> {rel.target_id}): {e}")
+
+    def find_entities_relevant_to_query(self, query: str, limit: int = 15) -> List[Dict[str, Any]]:
+        """
+        Finds entities in LadybugDB relevant to the query based on name, aliases,
+        and description keywords.
+        """
+        try:
+            res = self.conn.execute("MATCH (a:Entity) RETURN a.id, a.name, a.type, a.description, a.community_id")
+            entities = []
+            while res.has_next():
+                r = res.get_next()
+                entities.append({
+                    "id": r[0], "name": r[1] or r[0], "type": r[2] or "Concept", 
+                    "description": r[3] or "", "community_id": r[4] if r[4] is not None else 0
                 })
+        except Exception as e:
+            logger.warning(f"Error fetching entities for relevance search: {e}")
+            return []
+
+        if not entities:
+            return []
+
+        stopwords = {
+            "what", "who", "where", "when", "why", "how", "which", "is", "are", 
+            "was", "were", "the", "and", "that", "this", "from", "with", "for", 
+            "about", "tell", "show", "give", "does", "did", "can", "could", "have", "has", "find", "some"
+        }
+        import re
+        tokens = [w.lower() for w in re.findall(r'\b[a-zA-Z0-9_\-\']+\b', query) if len(w) >= 3 and w.lower() not in stopwords]
+        query_lower = query.lower().strip()
+
+        scored = []
+        for ent in entities:
+            name_lower = ent["name"].lower()
+            desc_lower = ent["description"].lower()
+            score = 0.0
+
+            # Exact or substring match in name
+            if name_lower and (name_lower in query_lower or query_lower in name_lower):
+                score += 20.0
+
+            # Token matches in name
+            for t in tokens:
+                if t in name_lower:
+                    score += 6.0
+                elif t in desc_lower:
+                    score += 2.5
+
+            if score > 0:
+                scored.append((score, ent))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [ent for score, ent in scored[:limit]]
+
+    def find_entities_in_text(self, text: str) -> List[Dict[str, Any]]:
+        """Finds all Entity nodes in LadybugDB whose names appear in the given query text."""
+        try:
+            res = self.conn.execute("MATCH (a:Entity) RETURN a.id, a.name, a.type, a.description")
+            matched = []
+            text_lower = text.lower()
+            while res.has_next():
+                r = res.get_next()
+                ename = (r[1] or "").strip()
+                if ename and len(ename) >= 3 and ename.lower() in text_lower:
+                    matched.append({
+                        "id": r[0], "name": r[1], "type": r[2], "description": r[3]
+                    })
+            if not matched:
+                matched = self.find_entities_relevant_to_query(text, limit=10)
+            return matched
+        except Exception as e:
+            logger.warning(f"Error finding entities in text: {e}")
+            return []
 
 
 
@@ -191,34 +311,148 @@ class GraphStorage:
                     "community_id": r[3], "name": r[4]
                 })
 
-            res_rels = self.conn.execute("MATCH (a:Entity)-[r:Related]->(b:Entity) RETURN a.id, b.id, r.rel_type, r.description")
+            res_rels = self.conn.execute("MATCH (a:Entity)-[r:Related]->(b:Entity) RETURN a.id, b.id, r.rel_type, r.description, a.name, b.name")
             rels = []
             while res_rels.has_next():
                 r = res_rels.get_next()
-                rels.append({"source_id": r[0], "target_id": r[1], "type": r[2], "description": r[3]})
+                rels.append({
+                    "source_id": r[0], 
+                    "target_id": r[1], 
+                    "type": r[2], 
+                    "description": r[3],
+                    "source_name": r[4] or r[0],
+                    "target_name": r[5] or r[1]
+                })
             
             # Also include ParentOf relations
-            res_parentof = self.conn.execute("MATCH (a:Entity)-[:ParentOf]->(b:Entity) RETURN a.id, b.id")
+            res_parentof = self.conn.execute("MATCH (a:Entity)-[:ParentOf]->(b:Entity) RETURN a.id, b.id, a.name, b.name")
             while res_parentof.has_next():
                 r = res_parentof.get_next()
                 rels.append({
                     "source_id": r[0], 
                     "target_id": r[1], 
                     "type": "PARENT_OF", 
-                    "description": "Structural Hierarchy"
+                    "description": "Structural Hierarchy",
+                    "source_name": r[2] or r[0],
+                    "target_name": r[3] or r[1]
                 })
             
             return {"entities": nodes, "relations": rels}
         except Exception as e:
+            logger.warning(f"Error getting full graph: {e}")
             return {"entities": [], "relations": []}
+
+    def ingest_chunks(self, chunks: List[Any], chunk_entity_map: Optional[Dict[str, List[str]]] = None):
+        """Persists contextual chunks and links them to extracted entities."""
+        for c in chunks:
+            cid = getattr(c, "id", None) or (c.get("id") if isinstance(c, dict) else str(c))
+            ctext = getattr(c, "text", None) or (c.get("text", "") if isinstance(c, dict) else "")
+            cctx = getattr(c, "context", "") or (c.get("context", "") if isinstance(c, dict) else "")
+            query = "MERGE (c:Chunk {id: $p_id}) SET c.text = $p_text, c.context = $p_ctx"
+            try:
+                self.conn.execute(query, {"p_id": cid, "p_text": ctext, "p_ctx": cctx})
+            except Exception as e:
+                logger.error(f"Failed to ingest chunk {cid}: {e}")
+
+        if chunk_entity_map:
+            for cid, entity_ids in chunk_entity_map.items():
+                for eid in entity_ids:
+                    try:
+                        self.conn.execute("MATCH (c:Chunk {id: $p_cid}), (e:Entity {id: $p_eid}) MERGE (c)-[:Mentions]->(e)", {
+                            "p_cid": cid,
+                            "p_eid": eid
+                        })
+                    except Exception as e:
+                        logger.debug(f"Failed to link chunk {cid} to entity {eid}: {e}")
+
+    def get_all_chunks(self) -> List[Dict[str, Any]]:
+        """Retrieves all stored contextual chunks from LadybugDB."""
+        try:
+            res = self.conn.execute("MATCH (c:Chunk) RETURN c.id, c.text, c.context")
+            chunks = []
+            while res.has_next():
+                r = res.get_next()
+                chunks.append({"id": r[0], "text": r[1], "context": r[2]})
+            return chunks
+        except Exception as e:
+            logger.warning(f"Error fetching chunks from DB: {e}")
+            return []
+
+    def search_chunks(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+        """
+        Retrieves contextual chunks from LadybugDB ranked by relevance to query.
+        Combines token matching, phrase overlap, and contextual summaries.
+        """
+        all_chunks = self.get_all_chunks()
+        if not all_chunks:
+            return []
+
+        stopwords = {
+            "what", "who", "where", "when", "why", "how", "which", "is", "are", 
+            "was", "were", "the", "and", "that", "this", "from", "with", "for", 
+            "about", "tell", "show", "give", "does", "did", "can", "could", "have", "has"
+        }
+        import re
+        tokens = [w.lower() for w in re.findall(r'\b[a-zA-Z0-9_\-\']+\b', query) if len(w) >= 3 and w.lower() not in stopwords]
+        query_lower = query.lower().strip()
+
+        scored_chunks = []
+        for c in all_chunks:
+            text = c.get("text", "")
+            context = c.get("context", "")
+            combined_text = f"{text} {context}".lower()
+
+            score = 0.0
+            # Phrase match
+            if len(query_lower) >= 4 and query_lower in combined_text:
+                score += 15.0
+
+            # Token overlap
+            for t in tokens:
+                if t in combined_text:
+                    score += 2.0
+                    if t in text.lower():
+                        score += 2.0
+
+            if score > 0:
+                scored_chunks.append((score, c))
+
+        scored_chunks.sort(key=lambda x: x[0], reverse=True)
+        if not scored_chunks and all_chunks:
+            # Fallback to returning the first chunks if no specific token matched
+            return all_chunks[:limit]
+        return [c for score, c in scored_chunks[:limit]]
+
+    def execute_cypher(self, cypher_query: str, limit: int = 100) -> Dict[str, Any]:
+        """Executes arbitrary Cypher read queries against LadybugDB."""
+        try:
+            res = self.conn.execute(cypher_query)
+            columns = res.get_column_names()
+            rows = []
+            count = 0
+            while res.has_next() and count < limit:
+                row = res.get_next()
+                rows.append([str(item) if item is not None else "null" for item in row])
+                count += 1
+            return {
+                "status": "success",
+                "columns": columns,
+                "rows": rows,
+                "total_rows": count
+            }
+        except Exception as e:
+            return {
+                "status": "error",
+                "error": str(e),
+                "columns": [],
+                "rows": [],
+                "total_rows": 0
+            }
 
     def _results_to_list(self, result) -> List[Dict[str, Any]]:
         rows = []
         while result.has_next():
             row = result.get_next()
-            # Convert to dict?
-            # Kuzu result row is list?
-            # We can use descriptors
-            # Simpler: just append row
             rows.append(row)
         return rows
+
