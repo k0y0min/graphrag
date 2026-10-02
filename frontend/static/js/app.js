@@ -5,6 +5,18 @@
 
 const BACKEND_URL = window.BACKEND_URL || '/api';
 
+// Safe Lucide icon initializer that never throws if icons are missing or still loading
+function safeCreateIcons() {
+    try {
+        if (typeof lucide !== 'undefined' && lucide && typeof lucide.createIcons === 'function') {
+            lucide.createIcons();
+        }
+    } catch (err) {
+        console.warn('Lucide icon rendering deferred or skipped:', err);
+    }
+}
+window.addEventListener('load', () => safeCreateIcons());
+
 // Global Application State
 let authToken = localStorage.getItem('graphrag_token');
 let authMode = 'login';
@@ -190,7 +202,7 @@ function loadSessionIntoView(session) {
             pipelineStepper.renderCompletedStages(session.type === 'query' ? 'query' : 'ingest');
         }
 
-        if (window.lucide) lucide.createIcons();
+        safeCreateIcons();
     }
 
     if (session.trace?.extracted_entities && network && nodesDS) {
@@ -244,6 +256,7 @@ LadybugDB is an embedded property graph database supporting the Cypher query lan
 // Initialization & Authentication
 // ==========================================================================
 document.addEventListener('DOMContentLoaded', () => {
+    safeCreateIcons();
     setupAuth();
     setupTopBar();
     setupOmniBar();
@@ -701,7 +714,7 @@ class PacedPipelineStepper {
             `;
             this.stepperStrip.appendChild(stepEl);
         });
-        if (window.lucide) lucide.createIcons();
+        safeCreateIcons();
     }
 
     renderCompletedStages(type = 'query') {
@@ -735,7 +748,7 @@ class PacedPipelineStepper {
                 }
             }
         });
-        if (window.lucide) lucide.createIcons();
+        safeCreateIcons();
     }
 
     async setStage(stageIdx, statusMessage, minDelay = 60) {
@@ -782,7 +795,7 @@ class PacedPipelineStepper {
         }
 
         if (this.statusText) this.statusText.innerText = statusMessage;
-        lucide.createIcons();
+        safeCreateIcons();
 
         if (minDelay > 0) {
             await new Promise(r => setTimeout(r, minDelay));
@@ -812,7 +825,7 @@ class PacedPipelineStepper {
         });
         if (this.statusText) this.statusText.innerText = finalMessage;
         this.stopTimer();
-        lucide.createIcons();
+        safeCreateIcons();
     }
 
     error(errMsg) {
@@ -831,7 +844,7 @@ class PacedPipelineStepper {
                 node.style.color = 'var(--accent-red)';
             }
         }
-        lucide.createIcons();
+        safeCreateIcons();
     }
 }
 
@@ -873,7 +886,7 @@ function setupOmniBar() {
                 minimizeExpandCardBtn.title = "Expand Progress";
             }
         }
-        if (window.lucide) lucide.createIcons();
+        safeCreateIcons();
     }
 
     if (minimizeExpandCardBtn) {
@@ -984,7 +997,7 @@ function setupOmniBar() {
             </div>
         `;
 
-        if (window.lucide) lucide.createIcons();
+        safeCreateIcons();
 
         const removeBtn = document.getElementById('omni-remove-file-btn');
         if (removeBtn) {
@@ -1190,7 +1203,7 @@ function setupOmniBar() {
                                         </div>
                                     </div>
                                 `;
-                                lucide.createIcons();
+                                safeCreateIcons();
                             }
 
                             showToast(`Graph updated: +${res.entities_extracted} entities, +${res.relations_extracted} relations!`, "success");
@@ -1322,7 +1335,7 @@ function setupOmniBar() {
                         ${triplesHtml}
                     </div>
                 `;
-                lucide.createIcons();
+                safeCreateIcons();
             }
 
             // Highlight queried entities in graph
@@ -1773,7 +1786,7 @@ function showNodeInspector(nodeId) {
         };
     }
 
-    lucide.createIcons();
+    safeCreateIcons();
     drawer.classList.remove('hidden');
 }
 
@@ -2082,7 +2095,7 @@ function renderLangGraphTrace(trace) {
             ` : ''}
         </div>
     `;
-    if (window.lucide) lucide.createIcons();
+    safeCreateIcons();
 }
 
 // ==========================================================================
@@ -2196,7 +2209,7 @@ function showToast(message, type = "info") {
     `;
 
     container.appendChild(toast);
-    lucide.createIcons();
+    safeCreateIcons();
 
     toast.addEventListener('click', () => {
         toast.style.opacity = '0';
