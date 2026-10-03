@@ -43,8 +43,7 @@
                 </div>
             </div>
             <div class="loading-brand">
-                <h2>GRAPHRAG EXPLORER</h2>
-                <p>Initializing Gemini 3.8-Flash ADC & LadybugDB Engine...</p>
+                <h2>GraphRAG</h2>
             </div>
         </div>
     </div>
@@ -105,7 +104,7 @@
 
     <!-- Top Floating Command Bar -->
     <header class="floating-top-bar glass-pill">
-        <div class="bar-left">
+        <div class="top-bar-segment top-bar-brand-segment">
             <span class="brand-title-sm">GraphRAG</span>
 
             <div class="pill-divider"></div>
@@ -114,21 +113,23 @@
             <div class="status-indicator-group">
                 <div class="live-pill" title="Gemini 3.8-Flash ADC Active">
                     <span class="pulse-dot"></span>
-                    <span>Gemini 3.8-Flash</span>
+                    <span class="pill-text">Gemini 3.8-Flash</span>
                 </div>
                 <div class="live-pill" title="Embedded LadybugDB Graph">
                     <i data-lucide="database" style="width:12px;height:12px;color:var(--accent-purple);"></i>
-                    <span>LadybugDB</span>
+                    <span class="pill-text">LadybugDB</span>
                 </div>
                 <div class="live-pill" title="LangGraph Multi-Agent Engine">
                     <i data-lucide="git-fork" style="width:12px;height:12px;color:var(--accent-cyan);"></i>
-                    <span>LangGraph</span>
+                    <span class="pill-text">LangGraph</span>
                 </div>
             </div>
         </div>
 
-        <div class="bar-center">
-            <!-- Real-time Metrics Counters -->
+        <!-- Integrated Metrics Counters in Natural Flow -->
+        <div class="top-bar-segment top-bar-metrics-segment">
+            <div class="pill-divider"></div>
+
             <div class="stats-badge-strip">
                 <div class="stat-badge" title="Indexed Entities">
                     <strong id="metric-nodes">0</strong> <span>Entities</span>
@@ -148,7 +149,8 @@
             </div>
         </div>
 
-        <div class="bar-right">
+        <!-- Actions & Session -->
+        <div class="top-bar-segment top-bar-actions-segment">
             <button id="inspect-deck-btn" class="pill-btn icon-only highlight-pill" title="Technical Deep Inspection (Chunks, Aliases & Traces)">
                 <i data-lucide="microscope"></i>
             </button>
@@ -227,16 +229,7 @@
         </div>
     </div>
 
-    <!-- Canvas Navigation HUD (Bottom Right) -->
-    <div class="floating-canvas-hud glass-pill">
-        <button class="hud-btn" id="fit-graph-btn" title="Center & Fit (F)"><i data-lucide="maximize-2"></i></button>
-        <button class="hud-btn" id="zoom-in-btn" title="Zoom In (+)"><i data-lucide="zoom-in"></i></button>
-        <button class="hud-btn" id="zoom-out-btn" title="Zoom Out (-)"><i data-lucide="zoom-out"></i></button>
-        <button class="hud-btn" id="stabilize-btn" title="Stabilize"><i data-lucide="refresh-cw"></i></button>
-        <button class="hud-btn" id="physics-toggle-btn" title="Toggle Physics Engine"><i data-lucide="activity"></i></button>
-        <div class="hud-divider"></div>
-        <button class="hud-btn hud-danger-btn" id="clear-db-btn" title="Clear Database"><i data-lucide="trash-2"></i></button>
-    </div>
+
 
     <!-- Slide-Over Entity Inspector Drawer (Right Side, Memgraph Lab / Bloom style) -->
     <aside id="bloom-inspector" class="bloom-inspector-drawer glass-card hidden">
@@ -408,6 +401,20 @@
             <button id="omni-submit-btn" class="omni-send-btn glow-btn" title="Execute (Enter)">
                 <i data-lucide="arrow-up"></i>
             </button>
+
+            <!-- Integrated Canvas Navigation Controls Divider -->
+            <div class="dock-hud-divider" title="Graph Controls"></div>
+
+            <!-- Integrated Canvas HUD Buttons -->
+            <div class="integrated-canvas-hud" id="integrated-canvas-hud">
+                <button class="hud-btn" id="fit-graph-btn" title="Center & Fit Canvas (F)"><i data-lucide="maximize-2"></i></button>
+                <button class="hud-btn" id="zoom-in-btn" title="Zoom In (+)"><i data-lucide="zoom-in"></i></button>
+                <button class="hud-btn" id="zoom-out-btn" title="Zoom Out (-)"><i data-lucide="zoom-out"></i></button>
+                <button class="hud-btn" id="stabilize-btn" title="Stabilize Layout"><i data-lucide="refresh-cw"></i></button>
+                <button class="hud-btn" id="physics-toggle-btn" title="Toggle Physics Engine"><i data-lucide="activity"></i></button>
+                <div class="hud-divider"></div>
+                <button class="hud-btn hud-danger-btn" id="clear-db-btn" title="Clear Database"><i data-lucide="trash-2"></i></button>
+            </div>
         </div>
     </div>
 
