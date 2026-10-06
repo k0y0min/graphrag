@@ -52,11 +52,7 @@
     <div id="auth-overlay" class="auth-overlay hidden">
         <div class="auth-modal glass-card">
             <div class="auth-header">
-                <div class="brand-badge">
-                    <i data-lucide="network"></i>
-                </div>
                 <h2>GraphRAG</h2>
-                <p>Authenticate to access your private Cypher knowledge graph.</p>
             </div>
 
             <div class="auth-tabs">
@@ -175,10 +171,9 @@
         </div>
     </header>
 
-    <!-- Floating Left Sidebar Toggle (Modern AI Chat Platform Style) -->
-    <button id="sidebar-toggle-btn" class="floating-sidebar-toggle glass-pill" title="Toggle Activity History">
-        <i data-lucide="panel-left"></i>
-        <span>History</span>
+    <!-- Floating Left Sidebar Toggle -->
+    <button id="sidebar-toggle-btn" class="floating-sidebar-toggle" title="Toggle Activity History">
+        <i data-lucide="chevron-right"></i>
     </button>
 
     <!-- Floating Filter Dock (Top Right) -->
@@ -298,7 +293,7 @@
                     <button id="clear-history-btn" class="text-link-btn" title="Clear History">Clear</button>
                 </div>
                 <div class="sessions-list" id="sessions-list">
-                    <div class="empty-state">No activity recorded yet. Ingest documents or run queries to see history here.</div>
+                    <div class="empty-state">No activity recorded yet.<br>Ingest documents or run queries to see history here.</div>
                 </div>
             </div>
         </div>

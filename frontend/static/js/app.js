@@ -1,5 +1,5 @@
 // ==========================================================================
-// GRAPHRAG STUDIO ENTERPRISE CLIENT - NEO4J BLOOM / MEMGRAPH LAB STYLE
+// GRAPHRAG CLIENT
 // Full-Screen Knowledge Graph Canvas, Floating Omni-Bar & Deep Inspection
 // ==========================================================================
 
@@ -58,6 +58,21 @@ const COMMUNITY_COLORS = [
 // ==========================================================================
 // Mutually Exclusive Panel / Drawer Management
 // ==========================================================================
+function updateSidebarToggleState(isOpen) {
+    const sbBtn = document.getElementById('sidebar-toggle-btn');
+    if (!sbBtn) return;
+    if (isOpen) {
+        sbBtn.classList.add('sidebar-open');
+        sbBtn.setAttribute('title', 'Close Activity History');
+        sbBtn.innerHTML = '<i data-lucide="chevron-left"></i>';
+    } else {
+        sbBtn.classList.remove('sidebar-open');
+        sbBtn.setAttribute('title', 'Open Activity History');
+        sbBtn.innerHTML = '<i data-lucide="chevron-right"></i>';
+    }
+    safeCreateIcons();
+}
+
 function closeAllFloatingPanels(exceptId = null) {
     const panels = [
         { id: 'filter-dock', el: document.getElementById('filter-dock') },
@@ -67,12 +82,11 @@ function closeAllFloatingPanels(exceptId = null) {
     panels.forEach(p => {
         if (p.el && p.id !== exceptId) {
             if (p.id === 'history-drawer' && localStorage.getItem('graphrag_history_sidebar_pinned') === 'true') {
-                return; // Leave history sidebar pinned open if frozen
+                return; // Leave history sidebar pinned open
             }
             p.el.classList.add('hidden');
             if (p.id === 'history-drawer') {
-                const sbBtn = document.getElementById('sidebar-toggle-btn');
-                if (sbBtn) sbBtn.classList.remove('hidden');
+                updateSidebarToggleState(false);
             }
         }
     });
@@ -112,7 +126,7 @@ function renderSessionsDrawer() {
 
     const sessions = getSavedSessions();
     if (sessions.length === 0) {
-        container.innerHTML = '<div class="empty-state">No activity recorded yet. Ingest documents or run queries to see history here.</div>';
+        container.innerHTML = '<div class="empty-state">No activity recorded yet.<br>Ingest documents or run queries to see history here.</div>';
         return;
     }
 
@@ -328,6 +342,7 @@ function setupAuth() {
         }
 
         authSubmitBtn.disabled = true;
+        const isRegistering = (authMode === 'register');
 
         try {
             if (authMode === 'register') {
@@ -361,7 +376,11 @@ function setupAuth() {
             if (userNameDisplay) userNameDisplay.innerText = username;
 
             authOverlay.classList.add('hidden');
-            showToast(`Welcome back, ${username}!`, "info");
+            if (isRegistering) {
+                showToast(`Welcome to GraphRAG, ${username}!`, "success");
+            } else {
+                showToast(`Welcome back, ${username}!`, "info");
+            }
             initGraph();
             loadGraphData();
             refreshStats();
@@ -374,7 +393,7 @@ function setupAuth() {
 
     if (logoutBtn) {
         logoutBtn.addEventListener('click', () => {
-            if (confirm("Sign out of GraphRAG Studio?")) {
+            if (confirm("Sign out of GraphRAG?")) {
                 logout();
             }
         });
@@ -479,7 +498,7 @@ function setupTopBar() {
         });
     }
 
-    // Activity History Floating Sidebar Handlers (Modern AI Chat Platform Style)
+    // Activity History Floating Sidebar Handlers
     const sidebarToggleBtn = document.getElementById('sidebar-toggle-btn');
     const pinHistoryBtn = document.getElementById('pin-history-sidebar-btn');
     const closeHistoryBtn = document.getElementById('close-history-drawer-btn');
@@ -497,16 +516,13 @@ function setupTopBar() {
             historyDrawer.classList.add('pinned');
             historyDrawer.classList.remove('hidden');
             if (pinHistoryBtn) pinHistoryBtn.classList.add('pinned');
-            if (sidebarToggleBtn) sidebarToggleBtn.classList.add('hidden');
+            updateSidebarToggleState(true);
             renderSessionsDrawer();
         } else {
             historyDrawer.classList.remove('pinned');
             if (pinHistoryBtn) pinHistoryBtn.classList.remove('pinned');
-            if (!historyDrawer.classList.contains('hidden')) {
-                if (sidebarToggleBtn) sidebarToggleBtn.classList.add('hidden');
-            } else {
-                if (sidebarToggleBtn) sidebarToggleBtn.classList.remove('hidden');
-            }
+            const isOpen = !historyDrawer.classList.contains('hidden');
+            updateSidebarToggleState(isOpen);
         }
     }
 
@@ -515,10 +531,19 @@ function setupTopBar() {
     if (sidebarToggleBtn && historyDrawer) {
         sidebarToggleBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            closeAllFloatingPanels('history-drawer');
-            historyDrawer.classList.remove('hidden');
-            sidebarToggleBtn.classList.add('hidden');
-            renderSessionsDrawer();
+            const isOpen = !historyDrawer.classList.contains('hidden');
+            if (isOpen) {
+                localStorage.setItem(HISTORY_PINNED_KEY, 'false');
+                historyDrawer.classList.add('hidden');
+                historyDrawer.classList.remove('pinned');
+                if (pinHistoryBtn) pinHistoryBtn.classList.remove('pinned');
+                updateSidebarToggleState(false);
+            } else {
+                closeAllFloatingPanels('history-drawer');
+                historyDrawer.classList.remove('hidden');
+                updateSidebarToggleState(true);
+                renderSessionsDrawer();
+            }
         });
     }
 
@@ -528,7 +553,7 @@ function setupTopBar() {
             const pinned = !isHistoryPinned();
             localStorage.setItem(HISTORY_PINNED_KEY, pinned ? 'true' : 'false');
             syncHistorySidebarState();
-            showToast(pinned ? "History sidebar pinned (frozen open)" : "History sidebar unpinned", "info");
+            showToast(pinned ? "History sidebar pinned" : "History sidebar unpinned", "info");
         });
     }
 
@@ -539,49 +564,9 @@ function setupTopBar() {
             historyDrawer.classList.add('hidden');
             historyDrawer.classList.remove('pinned');
             if (pinHistoryBtn) pinHistoryBtn.classList.remove('pinned');
-            if (sidebarToggleBtn) sidebarToggleBtn.classList.remove('hidden');
+            updateSidebarToggleState(false);
         });
     }
-
-    // Edge Hover Detection for History Sidebar (reveal when cursor moves to left edge)
-    let hoverHideTimeout = null;
-
-    document.addEventListener('mousemove', (e) => {
-        if (isHistoryPinned()) return;
-
-        // When cursor is within 24px of left screen edge (between top bar and bottom omnibar)
-        if (e.clientX <= 24 && e.clientY > 60 && e.clientY < window.innerHeight - 70) {
-            if (hoverHideTimeout) {
-                clearTimeout(hoverHideTimeout);
-                hoverHideTimeout = null;
-            }
-            if (historyDrawer && historyDrawer.classList.contains('hidden')) {
-                closeAllFloatingPanels('history-drawer');
-                historyDrawer.classList.remove('hidden');
-                if (sidebarToggleBtn) sidebarToggleBtn.classList.add('hidden');
-                renderSessionsDrawer();
-            }
-        } else if (historyDrawer && !historyDrawer.classList.contains('hidden')) {
-            // If cursor moves outside the sidebar + buffer zone
-            if (e.clientX > 350 || e.clientY < 45 || e.clientY > window.innerHeight - 45) {
-                if (!hoverHideTimeout) {
-                    hoverHideTimeout = setTimeout(() => {
-                        if (!isHistoryPinned() && historyDrawer && !historyDrawer.classList.contains('hidden')) {
-                            historyDrawer.classList.add('hidden');
-                            if (sidebarToggleBtn) sidebarToggleBtn.classList.remove('hidden');
-                        }
-                        hoverHideTimeout = null;
-                    }, 400);
-                }
-            } else {
-                // Cursor is inside sidebar or toggle, cancel hide
-                if (hoverHideTimeout) {
-                    clearTimeout(hoverHideTimeout);
-                    hoverHideTimeout = null;
-                }
-            }
-        }
-    });
 
     if (clearHistoryBtn) {
         clearHistoryBtn.addEventListener('click', () => {
@@ -609,7 +594,7 @@ function setupTopBar() {
         if (historyDrawer && !historyDrawer.classList.contains('hidden') && !isHistoryPinned()) {
             if (!historyDrawer.contains(target) && (!sidebarToggleBtn || !sidebarToggleBtn.contains(target))) {
                 historyDrawer.classList.add('hidden');
-                if (sidebarToggleBtn) sidebarToggleBtn.classList.remove('hidden');
+                updateSidebarToggleState(false);
             }
         }
 
@@ -1549,8 +1534,74 @@ function initGraph() {
 
     network = new vis.Network(container, data, options);
 
-    // Node click inspector listener
+    // Track interactions to distinguish plain click from drag or hold
+    let isDraggingOrHolding = false;
+    let pointerDownTime = 0;
+    let pointerDownPos = { x: 0, y: 0 };
+    let dragEndTimeout = null;
+
+    container.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0) return; // Only track primary left click
+        pointerDownTime = Date.now();
+        pointerDownPos = { x: e.clientX, y: e.clientY };
+        isDraggingOrHolding = false;
+        if (dragEndTimeout) {
+            clearTimeout(dragEndTimeout);
+            dragEndTimeout = null;
+        }
+    }, true);
+
+    container.addEventListener('pointermove', (e) => {
+        if (pointerDownTime > 0) {
+            const dx = e.clientX - pointerDownPos.x;
+            const dy = e.clientY - pointerDownPos.y;
+            // If pointer moved more than 6px, user is dragging
+            if (dx * dx + dy * dy > 36) {
+                isDraggingOrHolding = true;
+            }
+        }
+    }, true);
+
+    container.addEventListener('pointerup', () => {
+        // If held down for more than 300ms, mark as hold
+        if (pointerDownTime > 0 && Date.now() - pointerDownTime > 300) {
+            isDraggingOrHolding = true;
+        }
+    }, true);
+
+    network.on('dragStart', () => {
+        isDraggingOrHolding = true;
+    });
+
+    network.on('dragging', () => {
+        isDraggingOrHolding = true;
+    });
+
+    network.on('hold', () => {
+        isDraggingOrHolding = true;
+    });
+
+    network.on('dragEnd', () => {
+        isDraggingOrHolding = true;
+        if (dragEndTimeout) clearTimeout(dragEndTimeout);
+        dragEndTimeout = setTimeout(() => {
+            isDraggingOrHolding = false;
+            pointerDownTime = 0;
+        }, 150);
+    });
+
+    // Node click inspector listener: only trigger on a plain click (not drag or hold)
     network.on('click', (params) => {
+        const pressDuration = pointerDownTime > 0 ? (Date.now() - pointerDownTime) : 0;
+        const wasDraggedOrHeld = isDraggingOrHolding || (pressDuration > 300);
+
+        pointerDownTime = 0;
+
+        if (wasDraggedOrHeld) {
+            // User was rearranging nodes or holding; do not open/close inspector
+            return;
+        }
+
         if (params.nodes && params.nodes.length > 0) {
             const nodeId = params.nodes[0];
             showNodeInspector(nodeId);
